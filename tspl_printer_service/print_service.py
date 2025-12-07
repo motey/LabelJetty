@@ -1,0 +1,225 @@
+from operator import is_
+from typing import Optional, Dict, Literal
+from sqlmodel import select
+from db import get_session, PrintJob, WorkerStatus, init_db
+from tspl_printer import TSPLPrinter, TSPLPrinterConnectionUSB
+from log import get_logger
+import time
+import multiprocessing
+import os
+from datetime import datetime
+import psutil
+from sqlalchemy.sql.operators import is_
+from pydantic import BaseModel
+
+log = get_logger()
+
+
+# Response Models
+class ProcessInfo(BaseModel):
+    pid: int
+    status: str
+    cpu_percent: float
+    memory_mb: float
+    create_time: str
+
+
+class WorkerStatusResponse(BaseModel):
+    status: Literal["not_started", "running", "dead", "error"]
+    process_id: Optional[int] = None
+    worker_error: Optional[str] = None
+    process_alive: bool
+    process_info: Optional[ProcessInfo] = None
+
+
+class PrintServiceManager:
+    def __init__(self):
+        init_db()
+        self.process = None
+        self.shutdown_event = multiprocessing.Event()
+
+    def start(self):
+        """Start print service in background process (non-blocking)"""
+        if self.process and self.process.is_alive():
+            log.warning("Print service already running")
+            return
+
+        self.process = multiprocessing.Process(
+            target=self._run_service_with_watchdog, args=(self.shutdown_event,)
+        )
+        self.process.start()
+        log.info(f"Print service started with PID {self.process.pid}")
+
+    def shutdown(self, timeout: float = 10.0):
+        """Reliably shutdown the service"""
+        log.info("Shutting down print service...")
+        self.shutdown_event.set()
+
+        if self.process:
+            self.process.join(timeout=timeout)
+            if self.process.is_alive():
+                log.warning("Process didn't stop gracefully, terminating...")
+                self.process.terminate()
+                self.process.join(timeout=5)
+                if self.process.is_alive():
+                    log.error("Process didn't terminate, killing...")
+                    self.process.kill()
+                    self.process.join()
+
+        log.info("Print service stopped")
+
+    @classmethod
+    def get_worker_status(cls) -> WorkerStatusResponse:
+        """
+        Query worker status and verify process health (call this from REST API)
+        """
+        with get_session() as session:
+            status = session.get(WorkerStatus, 1)
+
+            if not status:
+                return WorkerStatusResponse(
+                    status="not_started",
+                    process_id=None,
+                    worker_error=None,
+                    process_alive=False,
+                    process_info=None,
+                )
+
+            process_alive = False
+            process_info = None
+
+            if status.process_id:
+                try:
+                    process = psutil.Process(status.process_id)
+                    process_alive = (
+                        process.is_running()
+                        and process.status() != psutil.STATUS_ZOMBIE
+                    )
+
+                    if process_alive:
+                        process_info = ProcessInfo(
+                            pid=process.pid,
+                            status=process.status(),
+                            cpu_percent=process.cpu_percent(interval=0.1),
+                            memory_mb=process.memory_info().rss / 1024 / 1024,
+                            create_time=datetime.fromtimestamp(
+                                process.create_time()
+                            ).isoformat(),
+                        )
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    process_alive = False
+
+            # Determine overall status
+            if status.worker_error:
+                overall_status = "error"
+            elif not process_alive:
+                overall_status = "dead"
+            else:
+                overall_status = "running"
+
+            return WorkerStatusResponse(
+                status=overall_status,
+                process_id=status.process_id,
+                worker_error=status.worker_error,
+                process_alive=process_alive,
+                process_info=process_info,
+            )
+
+    @staticmethod
+    def _run_service_with_watchdog(shutdown_event: multiprocessing.Event):
+        """Watchdog that restarts service on failure (max 3 times)"""
+        max_retries = 3
+        retry_count = 0
+
+        # Initialize worker status
+        with get_session() as session:
+            status = WorkerStatus(id=1, process_id=os.getpid(), worker_error=None)
+            session.merge(status)
+
+        while not shutdown_event.is_set() and retry_count < max_retries:
+            try:
+                service = PrintService()
+                service.run(shutdown_event)
+                break
+            except Exception as e:
+                retry_count += 1
+                error_msg = (
+                    f"Service crashed (attempt {retry_count}/{max_retries}): {e}"
+                )
+                log.error(error_msg)
+
+                with get_session() as session:
+                    status = session.get(WorkerStatus, 1)
+                    if status:
+                        status.worker_error = error_msg
+                        session.add(status)
+
+                if retry_count < max_retries:
+                    time.sleep(5)
+
+        if retry_count >= max_retries:
+            with get_session() as session:
+                status = session.get(WorkerStatus, 1)
+                if status:
+                    status.worker_error = (
+                        f"Service failed after {max_retries} retries. Giving up."
+                    )
+                    session.add(status)
+            log.error("Print service gave up after max retries")
+
+
+class PrintService:
+    def run(self, shutdown_event: multiprocessing.Event):
+        """Main service loop"""
+        log.info("Print service started")
+        while not shutdown_event.is_set():
+            try:
+                log.debug("Check for next print job")
+                job = self.get_next_print_job()
+                if job:
+                    self.print_job(job)
+                else:
+                    time.sleep(1)
+            except Exception as e:
+                log.error(f"Error in print loop: {e}")
+                time.sleep(5)
+
+    def get_next_print_job(self) -> Optional[PrintJob]:
+        """Get oldest queued job"""
+        with get_session() as session:
+            stmt = (
+                select(PrintJob)
+                .where(is_(PrintJob.started_at, None))
+                .order_by(PrintJob.created_at)
+            )
+            return session.exec(stmt).first()
+
+    def print_job(self, job: PrintJob):
+        """Execute print job"""
+        try:
+            job.started_at = datetime.now()
+            self.save_print_job(job)
+
+            con = TSPLPrinterConnectionUSB()
+            printer = TSPLPrinter(connection=con)
+
+            printer.wait_until_ready(timeout=60)
+            printer.print_png(job.png_file_path)
+            printer.wait_until_ready(10)
+
+            job.printer_status = printer.get_status()
+            job.error = printer.get_error_message()
+            job.finished_at = datetime.now()
+
+        except Exception as e:
+            log.error(f"Print job failed: {e}")
+            job.status = "failed"
+            job.error = str(e)
+        finally:
+            job.finished_at = datetime.now()
+            self.save_print_job(job)
+
+    def save_print_job(self, job: PrintJob):
+        """Persist job to database"""
+        with get_session() as session:
+            session.add(job)
