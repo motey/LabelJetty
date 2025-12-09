@@ -10,6 +10,42 @@ from tspl_printer_connection import TSPLPrinterConnectionUSB
 from pathlib import Path
 
 
+import serial
+from pydantic import BaseModel
+
+
+class TSPLPrinterStatusMessage(BaseModel):
+    ready: bool
+    head_opened: bool
+    paper_jam: bool
+    paper_empty: bool
+    ribbon_empty: bool
+    paused: bool
+    printing: bool
+    other_error: bool
+    _raw_status_byte: int
+
+    @classmethod
+    def from_raw_response(cls, response: int | bytes):
+        # Parse status
+        if isinstance(response, bytes):
+            status_byte: int = int(response[0])
+        else:
+            status_byte: int = response
+
+        return cls(
+            ready=(status_byte == 0),
+            head_opened=bool(status_byte & 0x01),
+            paper_jam=bool(status_byte & 0x02),
+            paper_empty=bool(status_byte & 0x04),
+            ribbon_empty=bool(status_byte & 0x08),
+            paused=bool(status_byte & 0x10),
+            printing=bool(status_byte & 0x20),
+            other_error=bool(status_byte & 0x80),
+            _raw_status_byte=status_byte,
+        )
+
+
 class TSPLPrinter:
     """
     Minimal TSPL printer interface.
@@ -37,7 +73,7 @@ class TSPLPrinter:
             dry_run_mode (bool, optional): _description_. Defaults to False.
         """
 
-        self.connection = connection
+        self.connection: TSPLPrinterConnectionUSB = connection
         self.width_mm = label_width_mm
         self.height_mm = label_height_mm
         self.dpi = dpi
@@ -50,7 +86,7 @@ class TSPLPrinter:
     # ------------------------------------------------------------ #
     #  Low-level send function
     # ------------------------------------------------------------ #
-    def _send(self, data: str):
+    def _send(self, data: str | bytes):
         if self.dry_run_mode:
             print(data)
             return
@@ -131,7 +167,7 @@ class TSPLPrinter:
         except Exception as e:
             raise TimeoutError(f"Failed to read from printer: {e}")
 
-    def get_status(self) -> Dict:
+    def get_status(self) -> TSPLPrinterStatusMessage:
         """
         Query printer status.
 
@@ -147,35 +183,23 @@ class TSPLPrinter:
                 - 'raw_status': bytes - Raw status byte
         """
         if self.dry_run_mode:
-            return {
-                "ready": True,
-                "paper_jam": False,
-                "paper_empty": False,
-                "ribbon_empty": False,
-                "printing": False,
-                "paused": False,
-                "error": False,
-                "raw_status": b"\x00",
-            }
+            return TSPLPrinterStatusMessage(
+                ready=True,
+                head_opened=False,
+                paper_jam=False,
+                paper_empty=False,
+                ribbon_empty=False,
+                paused=False,
+                printing=False,
+                other_error=False,
+                _raw_status_byte=1,
+            )
 
-        self._send("~!T\n")  # Request status
-        response = self.connection.receive(1)  # Read 1 byte
+        response = self.connection.query("b'\x1b!?'")  # Request status
 
         if not response:
             raise TimeoutError("No response from printer")
-
-        status_byte = response[0]
-
-        return {
-            "ready": (status_byte & 0x01) == 0,  # Bit 0: 0=ready, 1=not ready
-            "paper_jam": bool(status_byte & 0x02),  # Bit 1
-            "paper_empty": bool(status_byte & 0x04),  # Bit 2
-            "ribbon_empty": bool(status_byte & 0x08),  # Bit 3
-            "printing": bool(status_byte & 0x10),  # Bit 4
-            "paused": bool(status_byte & 0x20),  # Bit 5
-            "error": bool(status_byte & 0x80),  # Bit 7: general error
-            "raw_status": response,
-        }
+        return TSPLPrinterStatusMessage.from_raw_response(response=response)
 
     def is_ready(self) -> bool:
         """

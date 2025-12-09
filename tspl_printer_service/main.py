@@ -1,10 +1,12 @@
-from typing import Annotated
+from typing import Annotated, cast
 from fastapi import FastAPI, File, UploadFile
 from api_app import FastApiAppContainer
+from pathlib import Path
 import uvicorn
 import asyncio
 from uvicorn.config import LOGGING_CONFIG
 from print_service import PrintServiceManager
+from uvicorn.config import LifespanType
 
 
 def start():
@@ -15,8 +17,12 @@ def start():
     log = get_logger()
     log.info(f"LOG_LEVEL: {config.LOG_LEVEL}")
     log.info(f"UVICORN_LOG_LEVEL: {get_uvicorn_loglevel()}")
+    log.info(f"Create image storage directory at '{config.IMAGE_STORAGE_DIRECTORY}'")
+    log.info(f"USB Printer at {config.PRINTER_USB} if not exists")
+    Path(config.IMAGE_STORAGE_DIRECTORY).mkdir(parents=True, exist_ok=True)
+
     event_loop = asyncio.get_event_loop()
-    uvicorn_log_config: Dict = LOGGING_CONFIG
+    uvicorn_log_config = LOGGING_CONFIG
     fast_api_container = FastApiAppContainer()
     uvicorn_config = uvicorn.Config(
         app=fast_api_container.app,
@@ -25,7 +31,7 @@ def start():
         log_level=get_uvicorn_loglevel(),
         log_config=uvicorn_log_config,
         loop=event_loop,
-        lifespan="on",
+        lifespan=cast(LifespanType, "on"),
     )
     uvicorn_server = uvicorn.Server(config=uvicorn_config)
     print_service = PrintServiceManager()

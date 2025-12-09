@@ -1,7 +1,7 @@
 from typing import Annotated, Sequence, List, Type, Optional
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, File, UploadFile, APIRouter, HTTPException, status
-from uuid import UUID
+import uuid
 from fastapi import (
     Depends,
     Security,
@@ -15,6 +15,7 @@ from fastapi import (
 )
 
 from print_service import PrintServiceManager, PrintJob
+from api_auth import verify_token
 from config import Config
 from log import get_logger
 from db import get_session
@@ -27,19 +28,18 @@ fast_api_router: APIRouter = APIRouter()
 
 
 @fast_api_router.post("/print/png")
-async def print_png(file: Annotated[bytes, File()]):
+async def print_png(
+    file: Annotated[bytes, File()], access: Annotated[None, Depends(verify_token)]
+) -> PrintJob:
     worker_status = PrintServiceManager().get_worker_status()
     if worker_status.status != "running":
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Printing service not running.",
         )
+    filename = f"{uuid.uuid4}.png"
     with get_session() as session:
-        PrintJob()
-        stmt = (
-            select(PrintJob)
-            .where(is_(PrintJob.started_at, None))
-            .order_by(PrintJob.created_at)
-        )
-        return session.exec(stmt).first()
-    return {"message": "Hello World"}
+        pjob = PrintJob(png_file_name=filename)
+        session.add(pjob)
+        session.commit()
+    return pjob

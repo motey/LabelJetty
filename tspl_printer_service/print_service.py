@@ -1,17 +1,21 @@
 from operator import is_
 from typing import Optional, Dict, Literal
 from sqlmodel import select
-from db import get_session, PrintJob, WorkerStatus, init_db
-from tspl_printer import TSPLPrinter, TSPLPrinterConnectionUSB
-from log import get_logger
 import time
 import multiprocessing
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import psutil
 from sqlalchemy.sql.operators import is_
 from pydantic import BaseModel
 
+from db import get_session, PrintJob, WorkerStatus, init_db
+from tspl_printer import TSPLPrinter, TSPLPrinterConnectionUSB
+from log import get_logger
+
+from config import Config
+
+config = Config()
 log = get_logger()
 
 
@@ -200,14 +204,14 @@ class PrintService:
             job.started_at = datetime.now()
             self.save_print_job(job)
 
-            con = TSPLPrinterConnectionUSB()
+            con = config.get_printer_connection()
             printer = TSPLPrinter(connection=con)
 
             printer.wait_until_ready(timeout=60)
-            printer.print_png(job.png_file_path)
+            printer.print_png(job.get_png_file_path())
             printer.wait_until_ready(10)
 
-            job.printer_status = printer.get_status()
+            job.printer_status_on_finished = printer.get_status()
             job.error = printer.get_error_message()
             job.finished_at = datetime.now()
 
@@ -223,3 +227,24 @@ class PrintService:
         """Persist job to database"""
         with get_session() as session:
             session.add(job)
+
+    def clean_obsolete_print_jobs(self):
+        with get_session() as session:
+            cutoff_time = datetime.now() - timedelta(
+                days=config.DELETE_OLD_JOBS_AFTER_DAYS
+            )
+            jobs_to_delete_query = select(PrintJob).where(
+                PrintJob.created_at < cutoff_time
+            )
+            jobs_to_delete_result = session.exec(jobs_to_delete_query)
+            jobs_to_delete = jobs_to_delete_result.all()
+            for job in jobs_to_delete:
+                # if file exists delete it
+                log.info(
+                    f"Delete obsolete job because of age as configured in `DELETE_OLD_JOBS_AFTER_DAYS`. Job details: {job}"
+                )
+                job_file = job.get_png_file_path()
+                if os.path.exists(job_file):
+                    os.remove(job_file)
+                session.delete(job)
+            session.commit()

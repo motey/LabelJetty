@@ -1,10 +1,13 @@
-from typing import Optional, Literal, Dict, Generator
+from typing import Optional, Literal, Dict, Generator, Any
 from datetime import datetime
 from sqlmodel import SQLModel, Field, Column, Session, create_engine
 from contextlib import contextmanager
 from utils import SqlJsonText
 from config import Config
 import uuid
+from pathlib import Path
+from pydantic import field_serializer, field_validator
+from tspl_printer import TSPLPrinterStatusMessage
 
 config = Config()
 # Database URL - configure as needed
@@ -16,14 +19,14 @@ engine = create_engine(DATABASE_URL, echo=False)
 
 class PrintJob(SQLModel, table=True):
     id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
-    png_file_path: Optional[str] = None
+    png_file_name: Optional[str] = None
 
     error: Optional[str] = None
-    printer_status: Optional[Dict] = Field(
+    printer_status_on_finished: Optional[TSPLPrinterStatusMessage] = Field(
         default_factory=dict,
         sa_column=Column(SqlJsonText),
     )
-    created_at: Optional[datetime] = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=datetime.now)
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
 
@@ -36,6 +39,26 @@ class PrintJob(SQLModel, table=True):
             return "failed"
         else:
             return "done"
+
+    def get_png_file_path(self) -> Path:
+        return Path(f"{config.IMAGE_STORAGE_DIRECTORY}/{self.png_file_name}")
+
+    @field_serializer("printer_status_on_finished")
+    def serialize_printer_status(
+        self, value: Optional[TSPLPrinterStatusMessage]
+    ) -> Optional[Dict[str, Any]]:
+        """Convert TSPLPrinterStatusMessage to dict for database storage"""
+        return value.model_dump() if value is not None else None
+
+    @field_validator("printer_status_on_finished", mode="before")
+    @classmethod
+    def validate_printer_status(cls, value: Dict[str, Any] | None):
+        """Convert dict to TSPLPrinterStatusMessage when loading from database"""
+        if value is None or isinstance(value, TSPLPrinterStatusMessage):
+            return value
+        if isinstance(value, dict):
+            return TSPLPrinterStatusMessage(**value)
+        return value
 
 
 class WorkerStatus(SQLModel, table=True):

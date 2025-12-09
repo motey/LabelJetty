@@ -1,13 +1,11 @@
-import getversion
 import inspect
 import json
-import sys
-from typing import Dict, List, Callable
+from typing import Dict, List, Callable, Any, Coroutine
 from contextlib import asynccontextmanager
 
 from dataclasses import dataclass
 from fastapi import FastAPI
-from starlette.middleware.sessions import SessionMiddleware
+
 from fastapi.middleware.cors import CORSMiddleware
 
 from pathlib import Path
@@ -26,8 +24,8 @@ config = Config()
 
 @dataclass
 class AppLifespanCallback:
-    func: Callable
-    params: Dict | None = None
+    func: Callable[..., None] | Callable[..., Coroutine[Any, Any, None]]
+    params: Dict[str, Any] | None = None
 
     def is_async(self):
         return inspect.iscoroutinefunction(self.func)
@@ -38,7 +36,7 @@ class FastApiAppContainer:
         self.url_prefix = url_prefix
         self.shutdown_callbacks: List[AppLifespanCallback] = []
         self.startup_callbacks: List[AppLifespanCallback] = []
-        import __main__
+        # import __main__
 
         self.app = FastAPI(
             title="TSPL Printer API",
@@ -50,10 +48,18 @@ class FastApiAppContainer:
         self._mount_routers()
         self._apply_api_middleware()
 
-    def add_startup_callback(self, func: Callable, params: Dict | None = None) -> None:
+    def add_startup_callback(
+        self,
+        func: Callable[..., None] | Callable[..., Coroutine[Any, Any, None]],
+        params: Dict[str, Any] | None = None,
+    ) -> None:
         self.startup_callbacks.append(AppLifespanCallback(func=func, params=params))
 
-    def add_shutdown_callback(self, func: Callable, params: Dict | None = None) -> None:
+    def add_shutdown_callback(
+        self,
+        func: Callable[..., None] | Callable[..., Coroutine[Any, Any, None]],
+        params: Dict[str, Any] | None = None,
+    ) -> None:
         self.shutdown_callbacks.append(AppLifespanCallback(func=func, params=params))
 
     def dump_open_api_specification(self, json_file_path: Path):
@@ -101,7 +107,7 @@ class FastApiAppContainer:
         log.info(f"Origin allowed: {allow_origins}")
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=set(allow_origins),
+            allow_origins=list(set(allow_origins)),
             allow_methods=["*"],
             allow_headers=["*"],
             allow_credentials=True,

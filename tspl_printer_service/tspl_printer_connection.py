@@ -107,6 +107,47 @@ class TSPLPrinterConnectionUSB:
 
         raise ValueError(f"No USB device found at port path {port_path}")
 
+    # ----------------------------
+    # --- Lookup: Device Path   ---
+    # ----------------------------
+    @classmethod
+    def by_device_path(cls, device_path: str) -> Self:
+        """
+        Find device by kernel device path.
+
+        device_path can be:
+            "/dev/bus/usb/001/004"
+        or just:
+            "001/004"
+
+        This extracts bus and device numbers from the path.
+        """
+        if not device_path:
+            raise ValueError("Device path cannot be empty")
+
+        # Handle full path or just "bus/device"
+        if device_path.startswith("/dev/bus/usb/"):
+            device_path = device_path.replace("/dev/bus/usb/", "")
+
+        parts = device_path.split("/")
+        if len(parts) != 2:
+            raise ValueError(
+                f"Invalid device path format: {device_path}. "
+                "Expected format: '/dev/bus/usb/001/004' or '001/004'"
+            )
+
+        try:
+            bus = int(parts[0])
+            device_id = int(parts[1])
+        except ValueError:
+            raise ValueError(
+                f"Invalid device path format: {device_path}. "
+                "Bus and device must be numeric."
+            )
+
+        # Reuse the bus+device lookup
+        return cls.by_bus_and_device_id(bus, device_id)
+
     # -----------------------------
     # --- Helper (Optional Use) ---
     # -----------------------------
@@ -220,3 +261,99 @@ class TSPLPrinterConnectionUSB:
     def send_many(self, commands: Union[List[str], tuple[str, ...]]) -> None:
         for c in commands:
             self.send(c)
+
+    def receive(self, timeout: int = 1000, max_length: int = 1024) -> Optional[bytes]:
+        """
+        Read data from the TSPL printer via USB IN endpoint.
+
+        Args:
+            timeout: Timeout in milliseconds (default: 1000ms)
+            max_length: Maximum number of bytes to read (default: 1024)
+
+        Returns:
+            bytes: Data received from the printer, or None if no data/error
+
+        Raises:
+            RuntimeError: If not connected or endpoint not available
+        """
+        if not self.dev:
+            raise RuntimeError("Not connected to USB device. Call connect() first.")
+
+        if not self.ep_in:
+            raise RuntimeError("USB IN endpoint not available.")
+
+        try:
+            data = self.ep_in.read(max_length, timeout=timeout)
+            return bytes(data)
+
+        except usb.core.USBError as e:
+            # Timeout or no data available
+            if e.errno == 110:  # Timeout
+                return None
+
+            # Connection lost - attempt reconnect
+            print(f"USB read failed: {e} — reconnecting...")
+            try:
+                self.connect()
+                data = self.ep_in.read(max_length, timeout=timeout)
+                return bytes(data)
+            except Exception:
+                return None
+
+        except Exception as e:
+            print(f"Receive error: {e}")
+            return None
+
+    def receive_string(
+        self, timeout: int = 1000, max_length: int = 1024, encoding: str = "ascii"
+    ) -> Optional[str]:
+        """
+        Read data from the TSPL printer and decode as string.
+
+        Args:
+            timeout: Timeout in milliseconds (default: 1000ms)
+            max_length: Maximum number of bytes to read (default: 1024)
+            encoding: Text encoding to use (default: 'ascii')
+
+        Returns:
+            str: Decoded string from printer, or None if no data/error
+        """
+        data = self.receive(timeout=timeout, max_length=max_length)
+
+        if data is None:
+            return None
+
+        try:
+            return data.decode(encoding).strip()
+        except UnicodeDecodeError as e:
+            print(f"Decode error: {e}")
+            return None
+
+    def query(
+        self, cmd: str, timeout: int = 1000, max_length: int = 1024
+    ) -> Optional[bytes]:
+        self.send(cmd)
+        time.sleep(0.1)  # Brief delay for printer to process
+        return self.receive(timeout=timeout, max_length=max_length)
+
+    def query_string(
+        self, cmd: str, timeout: int = 1000, max_length: int = 1024
+    ) -> Optional[str]:
+        """
+        Send a TSPL query command and wait for response.
+
+        Args:
+            cmd: TSPL command to send
+            timeout: Timeout in milliseconds to wait for response
+            max_length: Maximum response length
+
+        Returns:
+            str: Response from printer, or None if no response
+
+        Example:
+            >>> printer.query("~!T")  # Query printer status
+            >>> printer.query("? DENSITY")  # Query density setting
+        """
+        self.send(cmd)
+        time.sleep(0.1)  # Brief delay for printer to process
+        return self.receive_string(timeout=timeout, max_length=max_length)
