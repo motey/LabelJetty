@@ -22,6 +22,7 @@ from labeljetty.web.ui import ui_router
 
 from labeljetty.core.logging import get_logger
 from labeljetty.config import Config
+from labeljetty.version import get_version
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -47,9 +48,7 @@ class FastApiAppContainer:
 
         self.app = FastAPI(
             title="TSPL Printer API",
-            # version=getversion.get_module_version(sys.modules[__main__])[0],
-            # openapi_url=f"{settings.api_v1_prefix}/openapi.json",
-            # debug=settings.debug,
+            version=get_version(),
             lifespan=self._app_lifespan,
         )
         self._mount_routers()

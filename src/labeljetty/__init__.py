@@ -1,1 +1,3 @@
-__version__ = "0.1.0"
+from labeljetty.version import get_version
+
+__version__ = get_version()

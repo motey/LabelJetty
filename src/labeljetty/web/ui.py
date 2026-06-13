@@ -27,6 +27,7 @@ from labeljetty.printer import JobType
 from labeljetty.printer.render import render_label_png_bytes
 from labeljetty.service.worker import PrintServiceManager
 from labeljetty.core.logging import get_logger
+from labeljetty.version import get_version
 
 config = Config()
 log = get_logger()
@@ -52,6 +53,7 @@ def _base_context(request: Request) -> dict:
         "homebox_enabled": config.homebox_configured(),
         "auth_enabled": config.auth_enabled(),
         "principal": current_principal(request),
+        "version": get_version(),
     }
 
 

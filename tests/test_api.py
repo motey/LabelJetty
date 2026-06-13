@@ -177,3 +177,19 @@ def test_protected_api_rejects_without_token(client, protected):
 def test_protected_api_accepts_token(client, protected):
     resp = client.get("/api/jobs", headers={"Authorization": "Bearer s3cr3t"})
     assert resp.status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+#  Version (meta)
+# --------------------------------------------------------------------------- #
+def test_version_endpoint(client):
+    resp = client.get("/api/version")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["version"]
+    assert "name" in body
+
+
+def test_version_endpoint_is_public(client, protected):
+    # The footer (incl. the login page) needs it without a credential.
+    assert client.get("/api/version").status_code == 200

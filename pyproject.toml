@@ -1,6 +1,8 @@
 [project]
 name = "labeljetty"
-version = "0.1.0"
+# Version is derived from the latest git tag by hatch-vcs (see [tool.hatch.version]).
+# Tags are plain "0.0.1" (an optional leading "v" is accepted too).
+dynamic = ["version"]
 description = "Network-accessible printing for USB TSPL thermal label printers (library + REST API + web UI)."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,8 +31,18 @@ labeljetty-testbench = "labeljetty.testbench:main"
 labeljetty-hash-password = "labeljetty.web.password:hash_password_cli"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+# Version comes from git tags. With no reachable tag (fresh clone, shallow CI
+# checkout) setuptools_scm derives a dev version; CI builds use fetch-depth: 0.
+[tool.hatch.version]
+source = "vcs"
+
+# Stamp the resolved version into a generated module so an installed package can
+# report it without git. Gitignored — regenerated on every build.
+[tool.hatch.build.hooks.vcs]
+version-file = "src/labeljetty/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/labeljetty"]

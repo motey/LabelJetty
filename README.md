@@ -68,6 +68,22 @@ The reference hardware is a **Vretti / Poskey-class USB label printer with TSPL 
 
 ## Installation
 
+`labeljetty` ships three ways: a **Docker image** (the main target — see [Docker](#docker)), a
+**PyPI package**, and a **source checkout**.
+
+### From PyPI
+
+```sh
+pip install labeljetty
+# or, with uv:
+uv tool install labeljetty
+```
+
+This gives you the `labeljetty`, `labeljetty-testbench`, and `labeljetty-hash-password`
+commands. You still need a `.env` (or env vars) — see [Printer setup](#printer-setup).
+
+### From source (development)
+
 The project uses `uv`. From the repository root:
 
 ```sh
@@ -463,6 +479,97 @@ curl -s -X POST $BASE/print/png -F file=@tests/fixtures/label_test.png
 curl -s "$BASE/jobs?limit=10"                       # inspect the queue
 curl -s $BASE/printer/status                         # {reachable, status_supported, status}
 ```
+
+---
+
+## Docker
+
+The image is published to Docker Hub as `<dockerhub-user>/labeljetty`. It runs the web
+service (API + UI) and is the recommended way to deploy the printer on an always-on box.
+
+```sh
+docker run --rm -p 8888:8888 \
+  --device=/dev/bus/usb \
+  -e PRINTER_USB=vid:2d37:pid:62de \
+  -v "$(pwd)/data:/data" \
+  <dockerhub-user>/labeljetty:latest
+```
+
+- **USB access** — the container needs the printer's USB device. `--device=/dev/bus/usb`
+  passes the whole USB bus (simplest); the host's udev rule from
+  [Printer setup](#2-grant-usb-access-udev-rule) still governs permissions. You can scope it
+  down to a single device node instead.
+- **Config** — every `.env` setting is also an env var (`-e KEY=value`), or mount an env file
+  with `--env-file .env`. Only `PRINTER_USB` is mandatory.
+- **Data** — the SQLite job DB and stored images live under `/data` (a volume). Container
+  defaults already point there (`SQLITE_PATH=/data/printjobs.sqlite`,
+  `IMAGE_STORAGE_DIRECTORY=/data/images`) and bind the server to `0.0.0.0:8888`.
+
+### Image tags
+
+| Tag         | When it's pushed                         |
+| ----------- | ---------------------------------------- |
+| `latest`    | Every normal GitHub Release              |
+| `beta`      | Every GitHub **pre-release**             |
+| `X.Y.Z`     | Every release (the exact version)        |
+
+Pin `X.Y.Z` in production; use `beta` to try pre-releases.
+
+### Supported architectures
+
+The image is a multi-arch manifest, so `docker pull` picks the right one automatically:
+
+| Architecture | Covers                                                                  |
+| ------------ | ----------------------------------------------------------------------- |
+| `linux/amd64` | x86-64 PCs and servers                                                  |
+| `linux/arm64` | Raspberry Pi **3 / 4 / 5 running a 64-bit OS** (Raspberry Pi OS 64-bit, Ubuntu) |
+
+> **32-bit Raspberry Pi OS, Pi Zero / Zero 2 W, Pi 1 / 2** run on `arm/v7` (or
+> `arm/v6`), which is **not** built — `docker pull` there fails with "no matching
+> manifest". The simplest fix is to run a **64-bit Raspberry Pi OS** (the default
+> download today) so the `arm64` image applies. If you genuinely need a 32-bit
+> image, please **[open an issue](../../issues)** — we'll consider adding
+> `linux/arm/v7` if there's interest.
+
+### Build locally
+
+For hands-on testing without CI, build the image from the repo root:
+
+```sh
+./build-container.sh          # builds labeljetty:dev, version from `git describe`
+IMAGE=foo TAG=test ./build-container.sh --no-cache   # override name/tag, pass docker args
+```
+
+## Releases & versioning
+
+Versioning is automated from **git tags** (plain `0.0.1` format) via
+[`hatch-vcs`](https://github.com/ofek/hatch-vcs) — there is no version string to bump by hand.
+
+Cutting a release:
+
+1. Create a **GitHub Release** with a tag like `0.1.0`.
+   - A normal release publishes Docker `latest` + `0.1.0` and the PyPI package.
+   - A **pre-release** publishes Docker `beta` + `0.1.0` (and the PyPI package).
+2. Two GitHub Actions workflows fire on the release:
+   - [`.github/workflows/pypi.yml`](.github/workflows/pypi.yml) — builds and uploads the
+     wheel/sdist to PyPI (version taken from the tag).
+   - [`.github/workflows/docker.yml`](.github/workflows/docker.yml) — builds and pushes the
+     multi-arch (amd64/arm64) image with the tags above.
+
+The running version is exposed at **`GET /api/version`** and shown in the web UI footer. In
+the Docker image it is *branded in at build time* (`--build-arg VERSION` → `LABELJETTY_VERSION`
+env var), so the container reports its release without a `.git` checkout inside the image.
+
+For the full picture — how `hatch-vcs` derives the version, how branding works, and what each
+workflow does — see [`docs/BUILD.md`](docs/BUILD.md).
+
+### Required CI secrets
+
+| Secret               | Used by      | What it is                                              |
+| -------------------- | ------------ | ------------------------------------------------------- |
+| `DOCKERHUB_USERNAME` | `docker.yml` | Docker Hub account; also the image namespace            |
+| `DOCKERHUB_TOKEN`    | `docker.yml` | Docker Hub access token (Account Settings → Security)   |
+| `PYPI_API_TOKEN`     | `pypi.yml`   | PyPI API token (pypi.org → Account → API tokens)        |
 
 ---
 

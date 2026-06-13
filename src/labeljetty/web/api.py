@@ -235,6 +235,23 @@ async def print_qrcode(
 
 
 # --------------------------------------------------------------------------- #
+#  Meta
+# --------------------------------------------------------------------------- #
+class VersionResponse(BaseModel):
+    name: str = Field(description="Configured application name (APP_NAME).")
+    version: str = Field(description="Running release version (from the git tag at build time).")
+
+
+@fast_api_router.get("/version", tags=["Meta"])
+async def version() -> VersionResponse:
+    # Public on purpose: the web UI footer (incl. the login page) shows it, and a
+    # version string is not sensitive. No `require_access` dependency.
+    from labeljetty.version import get_version
+
+    return VersionResponse(name=config.APP_NAME, version=get_version())
+
+
+# --------------------------------------------------------------------------- #
 #  Job status
 # --------------------------------------------------------------------------- #
 class JobStatusResponse(BaseModel):
