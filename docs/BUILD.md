@@ -96,7 +96,8 @@ env vars; extra args pass through to `docker build`.
 
 ## CI workflows
 
-All under [`.github/workflows/`](../.github/workflows/), firing on `release: published`.
+All under [`.github/workflows/`](../.github/workflows/). `pypi.yml` and `docker.yml` fire on
+`release: published`; `docker-dev.yml` fires on push to `main`.
 
 ### `pypi.yml`
 
@@ -113,13 +114,19 @@ All under [`.github/workflows/`](../.github/workflows/), firing on `release: pub
 3. Log in to Docker Hub, then `build-push-action` with `build-args: VERSION=<version>` and
    the computed tags. Layer cache via GitHub Actions cache (`type=gha`).
 
+### `docker-dev.yml`
+
+Bleeding-edge `:dev` channel, on every push to `main`. **`linux/amd64` only** — no QEMU, so
+it's fast (the multi-arch images come from releases via `docker.yml`). The version is branded
+as `0.0.0+dev.<short-sha>`. Not for production.
+
 ### Required secrets
 
-| Secret               | Workflow     | What it is                                            |
-| -------------------- | ------------ | ----------------------------------------------------- |
-| `DOCKERHUB_USERNAME` | `docker.yml` | Docker Hub account; also the image namespace          |
-| `DOCKERHUB_TOKEN`    | `docker.yml` | Docker Hub access token (Account Settings → Security) |
-| `PYPI_API_TOKEN`     | `pypi.yml`   | PyPI API token (pypi.org → Account → API tokens)      |
+| Secret               | Workflow                      | What it is                                            |
+| -------------------- | ----------------------------- | ----------------------------------------------------- |
+| `DOCKERHUB_USERNAME` | `docker.yml`, `docker-dev.yml` | Docker Hub account; also the image namespace         |
+| `DOCKERHUB_TOKEN`    | `docker.yml`, `docker-dev.yml` | Docker Hub access token (Account Settings → Security) |
+| `PYPI_API_TOKEN`     | `pypi.yml`                    | PyPI API token (pypi.org → Account → API tokens)      |
 
 ## Cutting a release
 
@@ -138,4 +145,5 @@ All under [`.github/workflows/`](../.github/workflows/), firing on `release: pub
 | `Dockerfile` / `.dockerignore`| Image build, version branding                   |
 | `build-container.sh`          | Local image build                               |
 | `.github/workflows/pypi.yml`  | PyPI publish                                     |
-| `.github/workflows/docker.yml`| Docker Hub publish (multi-arch)                 |
+| `.github/workflows/docker.yml`| Docker Hub publish (multi-arch, on release)      |
+| `.github/workflows/docker-dev.yml` | Docker Hub `:dev` (amd64, on push to main)  |

@@ -512,8 +512,11 @@ docker run --rm -p 8888:8888 \
 | `latest`    | Every normal GitHub Release              |
 | `beta`      | Every GitHub **pre-release**             |
 | `X.Y.Z`     | Every release (the exact version)        |
+| `dev`       | Every push to `main` (x86-only, bleeding edge) |
 
-Pin `X.Y.Z` in production; use `beta` to try pre-releases.
+Pin `X.Y.Z` in production; use `beta` to try pre-releases. `dev` rebuilds on every commit to
+`main` and is **`linux/amd64` only** (no Raspberry Pi) — for testing the latest code, not for
+production.
 
 ### Supported architectures
 
