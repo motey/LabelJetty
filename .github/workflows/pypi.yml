@@ -1,0 +1,28 @@
+name: pypi
+
+# Builds and publishes the Python package to PyPI on a GitHub Release.
+# The version is derived from the git tag by hatch-vcs, so the tag (e.g. 0.1.0)
+# IS the published version — fetch full history so the tag is visible.
+#
+# Required repository secret:
+#   PYPI_API_TOKEN  PyPI API token (https://pypi.org/manage/account/token/)
+on:
+  release:
+    types: [published]
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: Publish to PyPI
+        run: uv publish --token "${{ secrets.PYPI_API_TOKEN }}"

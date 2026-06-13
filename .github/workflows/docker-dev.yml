@@ -1,0 +1,46 @@
+name: docker-dev
+
+# Bleeding-edge channel: rebuilds the :dev image on every push to main.
+# x86-only (linux/amd64) — no QEMU, so it's fast; the released images
+# (docker.yml) are the multi-arch ones. Not for production.
+#
+# Required repository secrets (same as docker.yml):
+#   DOCKERHUB_USERNAME  Docker Hub account; also the image namespace (<user>/labeljetty)
+#   DOCKERHUB_TOKEN     Docker Hub access token
+on:
+  push:
+    branches: [main]
+
+jobs:
+  docker-dev:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute dev version
+        id: meta
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          # PEP440-valid local version stamped into the image (LABELJETTY_VERSION).
+          echo "version=0.0.0+dev.${SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/labeljetty:dev
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

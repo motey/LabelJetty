@@ -8,6 +8,8 @@ __pycache__/
 
 # Distribution / packaging
 .Python
+# hatch-vcs writes this at build time from the git tag (see pyproject.toml).
+src/labeljetty/_version.py
 build/
 develop-eggs/
 dist/
@@ -205,4 +207,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# labeljetty runtime artifacts
 printjobs.sqlite
+*.sqlite
+/images/
