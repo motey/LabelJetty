@@ -12,7 +12,8 @@ build/
 htmlcov/
 tests/
 scratchpad_code/
-docs/
+docs/*
+!docs/README.pypi.md
 images/
 *.sqlite
 .env

@@ -29,7 +29,10 @@ WORKDIR /app
 
 # Install into a project venv from the frozen lockfile. The source is needed
 # because the project itself is installed (and version-stamped) — copy it all.
-COPY pyproject.toml uv.lock README.md ./
+# pyproject's `readme` points at docs/README.pypi.md, so that file must be present
+# at its original path for the build to succeed.
+COPY pyproject.toml uv.lock ./
+COPY docs/README.pypi.md ./docs/README.pypi.md
 COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable
 

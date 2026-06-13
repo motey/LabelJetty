@@ -1,0 +1,282 @@
+# Advanced usage
+
+Everything beyond the Docker quickstart in the [README](../README.md): running without Docker,
+authentication, the REST API, text auto-fit, and Homebox integration. The full environment-variable
+reference and printer setup live in the separate **[Configuration](configuration.md)** doc.
+
+- [Running without Docker](#running-without-docker)
+- [Printer & configuration](#printer--configuration) (see the [Configuration](configuration.md) doc)
+- [Authentication](#authentication)
+- [The web UI](#the-web-ui)
+- [The REST API](#the-rest-api)
+- [Text rendering & auto-fit](#text-rendering--auto-fit)
+- [Homebox integration](#homebox-integration)
+- [Docker tags & architectures](#docker-tags--architectures)
+
+## Running without Docker
+
+`labeljetty` ships as a PyPI package and as a source checkout. Both give you the same three
+console commands:
+
+| Command | What it does |
+| --- | --- |
+| `labeljetty` | Runs the service - REST API + web UI + background print worker. |
+| `labeljetty-testbench` | CLI for driving the printer library directly (see [Developing](developing.md#real-world-print-tests-with-the-testbench)). |
+| `labeljetty-hash-password` | Generates a password hash for a login user. |
+
+### Requirements
+
+- **Python 3.11+**
+- [`uv`](https://docs.astral.sh/uv/) for dependency / virtualenv management (recommended)
+- **libusb** (usually already present on Linux; `pyusb` talks to it)
+- **DejaVu Sans** font for text/markdown rendering (present on most Linux desktops; on a bare
+  server: `sudo apt-get install -y fonts-dejavu-core`)
+- A USB **TSPL** label printer
+
+### From PyPI
+
+```sh
+pip install labeljetty
+# or, with uv:
+uv tool install labeljetty
+```
+
+You still need a `.env` (or env vars) and a printer set up - see
+[Configuration](configuration.md). Then run `labeljetty`.
+
+### From source
+
+The project uses `uv`. From the repository root:
+
+```sh
+# Install uv if you don't have it
+curl -fsSL https://astral.sh/uv/install.sh | sh
+
+# Create the virtualenv and install all dependencies (editable)
+uv sync
+```
+
+`uv run ...` automatically uses the project's virtualenv - you never activate it manually:
+
+```sh
+uv run labeljetty
+```
+
+The service starts the REST API, the web UI, and the background print worker on
+`http://localhost:8888/` by default.
+
+> **Working directory matters.** `SQLITE_PATH` and `IMAGE_STORAGE_DIRECTORY` are resolved
+> **relative to the current working directory**. Run from the repository root each time, or set
+> absolute paths in `.env`.
+
+## Printer & configuration
+
+Wiring up the printer (finding its USB id, the udev rule, the `PRINTER_USB` selector, and
+verifying with the test pattern) and the **full environment-variable reference** - including which
+settings you must, should, and can optionally set - now live in their own doc:
+
+> **→ [Configuration](configuration.md)** - all variables, [setting up the
+> printer](configuration.md#setting-up-the-printer), and the [status-reading
+> caveat](configuration.md#status-reading-is-optional).
+
+The essentials: copy `sample.env` to `.env`, set `PRINTER_USB` (e.g. `vid:2d37:pid:62de`, found
+via `lsusb`), add the udev rule so a non-root user can reach the USB device, then verify with
+`uv run labeljetty-testbench pattern`. Not sure what to buy? See [Hardware](hardware.md).
+
+## Authentication
+
+> ### ⚠️ THE DEFAULT IS NO AUTHENTICATION
+>
+> Out of the box (`AUTH_MODE=open`) **every endpoint and the whole web UI are public** - anyone
+> who can reach the host can print, browse the job queue, and read printer status. This is
+> intentional for the common case: a single printer on a **trusted home LAN**.
+>
+> **Do NOT expose this service to the internet, an untrusted network, or a shared host in open
+> mode.** Before doing so, set `AUTH_MODE=protected` and configure at least one token or user -
+> or put the service behind your own reverse-proxy auth / VPN.
+
+There are two modes, selected by `AUTH_MODE`:
+
+- **`open`** (default) - no authentication. LAN-only convenience.
+- **`protected`** - every API and UI route requires a valid credential. Multiple credential
+  **providers** can be active at once; any one of them satisfies a request:
+  - **API tokens** (`AUTH_TOKENS`) - for machines/scripts. Sent as `Authorization: Bearer <token>`.
+  - **Local users** (`AUTH_USERS`) - for humans. They log in at `/login`; a signed session
+    cookie keeps them authenticated. (Browsers hitting a protected route while logged out are
+    redirected to `/login`; API clients receive `401`.)
+
+> The auth layer is built around a pluggable provider model and a `Principal` identity, so
+> **OIDC / SSO is planned as a drop-in third provider** without changing any routes.
+
+### Protected setup
+
+```sh
+# Generate a password hash for a login user (never store plaintext):
+uv run labeljetty-hash-password
+# → pbkdf2_sha256$600000$...$...
+
+# .env
+AUTH_MODE=protected
+AUTH_TOKENS=[{"name":"ci","token":"choose-a-long-random-secret"}]
+AUTH_USERS=[{"username":"tim","password_hash":"pbkdf2_sha256$600000$...$..."}]
+SESSION_SECRET=another-long-random-string   # so logins survive restarts
+```
+
+If `AUTH_MODE=protected` but neither tokens nor users are configured, startup fails fast
+(otherwise you'd lock yourself out). If `SESSION_SECRET` is unset, an ephemeral one is used and
+logins reset on restart (a warning is logged).
+
+## The web UI
+
+Open `http://<host>:<port>/` for the mobile-first UI. It covers everything the API does, plus:
+
+- **Label profiles** - named sizes from `LABEL_PROFILES`, so you pick "Homebox" instead of
+  retyping 57×32 mm.
+- **Live preview** - render the label bitmap and see it before you print, saving wasted stock.
+- **Live status** - the job queue and the printer/worker status poll and update in place.
+
+Interactive API docs (Swagger UI) are served at `/docs`, and the OpenAPI schema at
+`/openapi.json`.
+
+## The REST API
+
+All routes are under the `/api` prefix. In `protected` mode, send an API token as
+`-H "Authorization: Bearer <token>"` (see [Authentication](#authentication)).
+
+| Method & path | Body | Purpose |
+| --- | --- | --- |
+| `POST /api/print/png` | multipart `file=@label.png` | Enqueue a PNG print |
+| `POST /api/print/pdf` | multipart `file=@doc.pdf`, `page` | Enqueue a PDF print (page or `all`) |
+| `POST /api/print/text` | JSON `{"text": "..."}` (optional `font_size`, `fit`; auto-fits if omitted) | Enqueue plain text |
+| `POST /api/print/markdown` | JSON `{"text": "# Hi\n* a"}` | Enqueue basic markdown |
+| `POST /api/print/barcode` | JSON `{"data": "123", "barcode_type": "128", "text": "..."}` | Enqueue a barcode |
+| `POST /api/print/qrcode` | JSON `{"data": "https://...", "ecc_level": "M", "text": "..."}` | Enqueue a QR code |
+| `GET  /api/jobs` | `?limit=100` | List recent jobs + their status |
+| `GET  /api/jobs/{job_id}` | - | Status of a single job |
+| `GET  /api/worker/status` | - | Background worker health |
+| `GET  /api/printer/status` | - | `{reachable, status_supported, status}`; `503` only if the device can't be opened |
+| `GET  /api/version` | - | The running service version |
+
+All print endpoints also accept optional `label_width_mm`, `label_height_mm`, `dpi` and `copies`
+to override the defaults per job. `/print/png` and `/print/pdf` additionally take `fit` - how the
+image scales to the label: `fit` (contain, default), `fill` (cover/crop), `stretch` (exact size)
+or `original` (keep the image's own size). Text and markdown use their own `fit` (`fill`/`width`);
+see [Text rendering & auto-fit](#text-rendering--auto-fit).
+
+Example:
+
+```sh
+BASE=http://127.0.0.1:8888/api
+
+curl -s -X POST $BASE/print/text -H 'content-type: application/json' \
+  -d '{"text":"hello label","copies":2}'
+curl -s -X POST $BASE/print/png -F file=@tests/fixtures/label_test.png
+curl -s "$BASE/jobs?limit=10"
+curl -s $BASE/printer/status     # {reachable, status_supported, status}
+```
+
+## Text rendering & auto-fit
+
+Plain-text and markdown labels **auto-scale to your label** by default - you don't have to guess
+a font size for each stock. Markdown keeps headings proportionally larger (`#` = 2×, `##` = 1.5×
+the body). Two things control sizing:
+
+- **Fixed size** - pass an explicit font size (`--font-size` on the test bench, `font_size` in
+  the `/print/text` body) to disable auto-fit and use that exact size.
+- **Fit mode** (`fit`, default `fill`) - how auto-fit chooses the size:
+
+  | `fit` | Behaviour |
+  | --- | --- |
+  | `fill` | Grow the text to fill the label (width **and** height), wrapping lines as needed. Maximises size; short text may wrap to use the vertical space (e.g. `Box 12` → two big lines). |
+  | `width` | Size the text to the label **width**, keeping your line breaks (no extra wrapping); height may be left blank (e.g. `Box 12` stays one line). Falls back to `fill` if a line is too long to fit unwrapped. |
+
+Examples:
+
+```sh
+# default (fill) - fills the whole label
+uv run labeljetty-testbench text "Box 12"
+
+# width - keep it on one line, sized to the label width
+uv run labeljetty-testbench text "Box 12" --fit width
+
+# fixed size, no auto-fit
+uv run labeljetty-testbench text "Box 12" --font-size 40
+
+# via the API
+curl -s -X POST $BASE/print/text -H 'content-type: application/json' \
+  -d '{"text":"Box 12", "fit":"width"}'
+```
+
+## Homebox integration
+
+[Homebox](https://github.com/sysadminsmedia/homebox) integration is a **self-contained, optional
+module**. The printer service works fully on its own; set `HOMEBOX_URL` + `HOMEBOX_API_KEY` and a
+**Homebox** section appears in the web UI. With nothing configured, there is no trace of Homebox
+in the app.
+
+> Targets **Homebox v0.26.0+**, where items and locations were merged into a single **entity**
+> model (`/v1/entities`). The API key is a static `hb_...` key sent as a bearer token; the Homebox
+> admin must have set `HBOX_AUTH_API_KEY_PEPPER` (≥32 chars) for keys to work.
+
+There are three ways to connect the two systems:
+
+### A. Pull - the in-app module
+
+The UI's Homebox section lets you **search items and locations**, pick one, preview, and print.
+The label printed is **Homebox's own label**, fetched from its labelmaker API
+(`/v1/labelmaker/{item,location,asset}/{id}`) and printed by us - so there's a single source of
+label rendering (Homebox's, controlled by its `HBOX_LABEL_MAKER_*` sizing) rather than a second
+renderer to maintain. Just set `HOMEBOX_URL` + `HOMEBOX_API_KEY`.
+
+### B. Push - external label service
+
+Homebox can delegate label *rendering* to an HTTP service via
+`HBOX_LABEL_MAKER_LABEL_SERVICE_URL`. We expose exactly such an endpoint (`/api/homebox/label`):
+it renders the label with **our** engine (tuned to your stock) and **enqueues the print as a side
+effect**, then returns the image to Homebox. One mechanism renders *and* prints, with no script
+on the Homebox host - point `HBOX_LABEL_MAKER_LABEL_SERVICE_URL` at our endpoint.
+
+### C. Print command - fallback
+
+Homebox's per-entity print action renders a `label.png` server-side and runs a configured command
+(`HBOX_LABEL_MAKER_PRINT_COMMAND`) with a `{{.FileName}}` placeholder. The setup wizard at
+`/ui/homebox/setup` generates a ready-to-paste script that `curl`s the file to `/api/print/png`,
+plus the `HBOX_LABEL_MAKER_*` env-var hints (sized in pixels) to match your label stock. Prefer
+this when you want Homebox's *native* label layout and "print means print" semantics with our
+service as a non-critical dependency.
+
+## Docker tags & architectures
+
+The image is published to Docker Hub as
+[`motey/labeljetty`](https://hub.docker.com/r/motey/labeljetty).
+
+### Image tags
+
+| Tag | When it's pushed |
+| --- | --- |
+| `latest` | Every normal GitHub Release |
+| `beta` | Every GitHub **pre-release** |
+| `X.Y.Z` | Every release (the exact version) |
+| `dev` | Every push to `main` (x86-only, bleeding edge) |
+
+Pin `X.Y.Z` in production; use `beta` to try pre-releases. `dev` rebuilds on every commit to
+`main` and is **`linux/amd64` only** (no Raspberry Pi) - for testing the latest code, not for
+production.
+
+### Supported architectures
+
+The image is a multi-arch manifest, so `docker pull` picks the right one automatically:
+
+| Architecture | Covers |
+| --- | --- |
+| `linux/amd64` | x86-64 PCs and servers |
+| `linux/arm64` | Raspberry Pi **3 / 4 / 5 running a 64-bit OS** (Raspberry Pi OS 64-bit, Ubuntu) |
+
+> **32-bit Raspberry Pi OS, Pi Zero / Zero 2 W, Pi 1 / 2** run on `arm/v7` (or `arm/v6`), which
+> is **not** built - `docker pull` there fails with "no matching manifest". The simplest fix is
+> to run a **64-bit Raspberry Pi OS** (the default download today) so the `arm64` image applies.
+> If you genuinely need a 32-bit image, please **[open an issue](../../issues)** - we'll consider
+> adding `linux/arm/v7` if there's interest.
+
+Building the image locally (for hands-on testing) and the full release process are covered in
+**[Build & release](BUILD.md)**.

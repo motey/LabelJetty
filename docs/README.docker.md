@@ -1,0 +1,53 @@
+# 🏷️ LabelJetty
+
+**Turn a cheap, USB-only TSPL thermal label printer into a smart, network-accessible label
+printer** - drive it from your phone, desktop, or another machine over your LAN. It talks to the
+printer **directly over USB** (no CUPS, no vendor driver) and gives you a mobile-first web UI, a
+REST API, and a Python library for printing PNGs, PDFs, text, markdown, barcodes and QR codes.
+Optional, self-contained [Homebox](https://github.com/sysadminsmedia/homebox) integration is
+built in.
+
+<a href="https://github.com/motey/LabelJetty"><img src="https://raw.githubusercontent.com/motey/LabelJetty/main/docs/labejetti_screenshot.png" alt="LabelJetty web UI" width="250"></a>
+
+## Quick start
+
+```sh
+docker run --rm -p 8888:8888 \
+  --device=/dev/bus/usb \
+  -e PRINTER_USB=vid:2d37:pid:62de \
+  -v "$(pwd)/data:/data" \
+  motey/labeljetty:latest
+```
+
+Then open **http://localhost:8888/**.
+
+- **`--device=/dev/bus/usb`** gives the container the printer's USB bus (permissions are governed
+  by a host udev rule).
+- **`-e PRINTER_USB=...`** selects which USB device is your printer. `vid:<vendor>:pid:<product>`
+  is the robust form; find yours with `lsusb`. This is the only required setting.
+- **`-v ...:/data`** persists the SQLite job DB and stored images.
+
+Every setting is an env var (`-e KEY=value`).
+
+## Tags
+
+| Tag | When it's pushed |
+| --- | --- |
+| `latest` | Every normal release |
+| `beta` | Every pre-release |
+| `X.Y.Z` | The exact version |
+| `dev` | Every push to `main` (amd64-only, bleeding edge) |
+
+Multi-arch (`linux/amd64` + `linux/arm64`, so 64-bit Raspberry Pi 3/4/5 works).
+
+## Heads-up
+
+- **No authentication by default** - fine on a trusted home LAN, but turn on `AUTH_MODE=protected`
+  before exposing it to an untrusted network.
+- **Reference hardware is a Vretti 420B** (Poskey-class TSPL, ~203 dpi). It should work with any
+  USB TSPL printer; feedback/PRs for other models are welcome.
+
+## More information
+
+Full docs, configuration reference, authentication, the REST API, and Homebox setup live on
+**GitHub: https://github.com/motey/LabelJetty**

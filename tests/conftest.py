@@ -29,7 +29,7 @@ _TMP_ROOT = tempfile.mkdtemp(prefix="labeljetty-tests-")
 os.environ.update(
     {
         # Ignore the repo's real .env entirely (point at a path that doesn't exist).
-        "TSPL_PRINTER_WEBAPI_DOT_ENV_FILE": os.path.join(_TMP_ROOT, "nonexistent.env"),
+        "LABELJETTY_DOT_ENV_FILE": os.path.join(_TMP_ROOT, "nonexistent.env"),
         # Required field — a dummy USB id that never matches real hardware.
         "PRINTER_USB": "vid:0000:pid:0000",
         # Throwaway sqlite DB + image storage so we never touch ./printjobs.sqlite.

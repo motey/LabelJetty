@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 # per the README) — the override env var takes precedence. It is intentionally
 # not resolved relative to this file, which now lives inside the package.
 env_file_path = os.environ.get(
-    "TSPL_PRINTER_WEBAPI_DOT_ENV_FILE", Path(".env")
+    "LABELJETTY_DOT_ENV_FILE", Path(".env")
 )
 
 
@@ -41,7 +41,7 @@ class AuthUser(BaseModel):
 
 
 class Config(BaseSettings):
-    APP_NAME: str = "TSPL Printer WebAPI"
+    APP_NAME: str = "LabelJetty"
     LOG_LEVEL: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = Field(
         default="DEBUG"
     )

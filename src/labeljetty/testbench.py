@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-TSPL library test bench (roadmap #1B).
+LabelJetty test bench.
 
 A small CLI to drive the TSPLPrinter library directly — against the real USB
 printer, or in --dry-run mode where the generated TSPL is printed to stdout
 instead of the device. Handy for verifying positioning/sizing on the Vretti.
 
 Label geometry defaults come from the config/env vars (DEFAULT_LABEL_WIDTH_MM,
-DEFAULT_LABEL_HEIGHT_MM, DEFAULT_DPI in tspl_printer_service/.env); pass
+DEFAULT_LABEL_HEIGHT_MM, DEFAULT_DPI in the repo-root .env); pass
 --width-mm / --height-mm / --dpi to override per run.
 
 Examples (run from the repository root):
 
-    uv run python tspl_printer_service/testbench.py --dry-run pattern
-    uv run python tspl_printer_service/testbench.py --width-mm 50 --height-mm 30 pattern
-    uv run python tspl_printer_service/testbench.py text "Hello world"
-    uv run python tspl_printer_service/testbench.py status
+    uv run labeljetty-testbench --dry-run pattern
+    uv run labeljetty-testbench --width-mm 50 --height-mm 30 pattern
+    uv run labeljetty-testbench text "Hello world"
+    uv run labeljetty-testbench status
 """
 import argparse
 import sys

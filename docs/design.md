@@ -1,32 +1,36 @@
-# TSPL Label Printer — Project Description & Goals
+# Design
 
-## Vision
+How **LabelJetty** is put together, what the moving parts are, and why it's built this way.
 
-Turn a cheap, USB-only TSPL thermal label printer into a "smart", network-accessible
-label printer that can be driven from a phone, a desktop, or another machine — running
-on a small always-on computer (e.g. a Raspberry Pi) next to the printer.
+- [Goals](#goals)
+- [Architecture](#architecture)
+- [The layers](#the-layers)
+- [The job model](#the-job-model)
+- [Rendering](#rendering)
+- [Authentication](#authentication)
+- [Homebox integration](#homebox-integration)
+- [Design principles & trade-offs](#design-principles--trade-offs)
+- [Non-goals](#non-goals)
+
+## Goals
 
 There are two intertwined goals:
 
-1. **Primary goal — Homebox label printing.**
-   Make it trivial to print labels (QR code + item name/asset ID) for items managed in a
-   self-hosted [Homebox](https://github.com/sysadminsmedia/homebox) inventory server.
-   This is the concrete itch this project scratches.
+1. **Primary - Homebox label printing.** Make it trivial to print labels (QR code + item
+   name / asset ID) for items in a self-hosted
+   [Homebox](https://github.com/sysadminsmedia/homebox) inventory. This is the concrete itch why i build this.
+2. **Side quest - a generic USB TSPL printer interface.** The Homebox use case sits on top of a
+   general-purpose library + service that can drive *any* TSPL printer over USB and print PDFs,
+   images, text, barcodes and QR codes. Useful on its own, independent of Homebox.
 
-2. **Side quest — a generic USB TSPL printer interface.**
-   The Homebox use case sits on top of a general-purpose library + service that can drive
-   *any* TSPL printer over USB and print PDFs, images, text, barcodes and QR codes. Useful
-   on its own, independent of Homebox.
-
-The development/reference hardware is a **Vretti USB Etikettendrucker (label printer) with
-TSPL support**, ~203 dpi.
-
----
+The development/reference hardware is a **Vretti 420B** (a Poskey-class USB TSPL printer,
+~203 dpi, USB id `2d37:62de`).
 
 ## Architecture
 
-Three layers, lowest dependency footprint possible (talk to the printer directly over USB
-rather than relying on CUPS/vendor drivers):
+Four layers, each depending only on the one below it, with the lowest dependency footprint
+possible - we talk to the printer **directly over USB** rather than relying on CUPS or a vendor
+driver.
 
 ```
 ┌────────────────────────────────────────────────────┐
@@ -44,294 +48,147 @@ rather than relying on CUPS/vendor drivers):
                    └───────────┘
 ```
 
-- **Connection layer** — raw USB endpoint I/O, device discovery, reconnect.
-- **Library layer** — convert PDFs/PNGs/text/barcodes/QR into TSPL command streams; query
-  status. No web/server concerns. Usable as a standalone Python library.
-- **Service layer** — accept print jobs, persist them, serialize access to the single
-  physical printer through a background worker so concurrent requests don't collide.
-- **Interface layer** — Web UI for humans, REST API for machines.
+This maps onto the package layout under [`src/labeljetty/`](../src/labeljetty):
 
----
+| Subpackage | Layer | Responsibility |
+| --- | --- | --- |
+| [`printer/`](../src/labeljetty/printer) | connection + library | USB I/O, rendering, TSPL command generation. Zero internal deps - extractable as a standalone library. |
+| [`core/`](../src/labeljetty/core) | persistence | SQLModel job/worker models, the SQLite engine, logging, custom SQL types. |
+| [`service/`](../src/labeljetty/service) | service | the background worker that owns the printer and processes jobs. |
+| [`integrations/`](../src/labeljetty/integrations) | integration | the Homebox client. |
+| [`web/`](../src/labeljetty/web) | interface | FastAPI app, REST API, web UI (Jinja2 + HTMX), auth. |
+| [`config.py`](../src/labeljetty/config.py) | - | one `Config` (pydantic-settings) read from `.env` / env vars; sits at the package root on purpose - the first thing people look for. |
 
-## Library requirements
+## The layers
 
-Goal: a clean, importable Python library that is the *only* thing that knows TSPL.
+### Connection layer - `printer/connection.py`
 
-- Talk to the printer at the lowest practical level (pyusb) — no external print-system
-  dependency (no CUPS, no vendor driver).
-- Configurable label size (width/height in mm) and DPI; derive pixel dimensions from these.
-- Support printing:
-  - **PDF** — render page(s) to a bitmap sized to the label. *(not yet implemented)*
-  - **PNG / images** — with optional auto-resize-to-fit (keep aspect ratio), dithering for
-    thermal output. *(implemented)*
-  - **Raw text** — render text to the label with sane wrapping. *(only via markdown today)*
-  - **Simple markdown** — headings, bullets, bold. *(implemented, basic)*
-  - **Numbers/strings as barcodes** — Code128, EAN, UPC, Code39, etc. *(implemented)*
-  - **Text/URLs as QR codes** — with ECC level + auto-sizing. *(implemented)*
-  - **Composite labels** — e.g. QR + text, barcode + text (the Homebox label shape).
-    *(basic helpers exist)*
-- Query printer status (ready / head open / paper out / ribbon out / paused / error) and
-  expose a typed status object. *(parsing exists; the live status path has bugs — see Known
-  issues)*
-- A `dry_run` mode that prints the generated TSPL to stdout instead of the device, for
-  development without hardware. *(implemented)*
+Raw USB endpoint I/O via `pyusb`/libusb: device discovery (the `PRINTER_USB` selector strategies
+- `vid:pid`, `serial`, `port`, `path`, `bus:addr`), lazy connect + endpoint setup, and fast-fail
+on `EACCES` with a hint pointing at the udev rule. No web or server concerns.
 
-### Known issues / cleanup in the library (to fix while reviving)
+### Library layer - `printer/`
 
-- `TSPLPrinter.receive()` references `self.device`, which doesn't exist (the connection is
-  `self.connection`); this path is dead.
-- `is_ready()` / `get_error_message()` do dict-style access (`status["ready"]`) on a Pydantic
-  model that exposes attributes (`status.ready`) — will raise.
-- `TSPLPrinterStatusMessage` has no `error` field, but callers read `status["error"]`.
-- `get_status()` sends the literal string `"b'\x1b!?'"` rather than the status-query bytes.
-- Decide and document the real TSPL status-query command for the Vretti and verify the
-  status-byte bit map against the actual device.
+The only thing that knows TSPL. It converts PDFs / PNGs / text / markdown / barcodes / QR codes
+into TSPL command streams and (where the printer supports it) parses status. Usable as a
+standalone Python library: `from labeljetty.printer import TSPLPrinter`. A `dry_run` mode prints
+the generated TSPL to stdout instead of sending it to the device, for development without
+hardware.
 
----
+`JobType` lives here too, so the printer package has **zero internal dependencies** and could be
+lifted out into its own library.
 
-## Print service requirements
+### Service layer - `service/worker.py` + `core/db.py`
 
-- A persistent **job queue** (sqlite) so requests are decoupled from the physical print and
-  survive restarts. *(implemented)*
-- A **single worker** that owns the printer and processes jobs one at a time. *(implemented
-  via multiprocessing + watchdog with retry/backoff)*
-- Persist per-job: input file/payload, type, requested label size, timestamps
-  (queued/started/finished), final printer status, and error. *(partly implemented — only
-  PNG today)*
-- Configurable retention: auto-delete old jobs and their stored files after N days.
-  *(implemented; not yet scheduled to run)*
-- Extend the job model beyond PNG to all supported payload types (pdf/text/markdown/
-  barcode/qrcode/composite) with their parameters. *(TODO)*
+A persistent **job queue** (SQLite) decouples requests from the physical print and survives
+restarts. A **single background worker** (multiprocessing + a watchdog with retry/backoff) owns
+the printer and processes jobs one at a time, so concurrent web/API requests never collide on the
+one physical device. The worker persists each job's lifecycle: queued → started → finished, plus
+final printer status and any error. Old jobs and their files are cleaned up after
+`DELETE_OLD_JOBS_AFTER_DAYS`.
 
----
+### Interface layer - `web/`
 
-## Web interface & API requirements
+A FastAPI app exposing the [REST API](advanced-usage.md#the-rest-api) (for machines) and a
+mobile-first [web UI](advanced-usage.md#the-web-ui) (for humans) built with Jinja2 templates +
+HTMX - no front-end build step, served directly by FastAPI from `templates/` and `static/`. Both
+the UI and API enqueue jobs through the same service layer, so they're always at feature parity.
 
-### Base
+## The job model
 
-- Desktop **and** mobile friendly modern UI.
-- Auth modes, selectable by configuration:
-  - **Open mode** — no login (LAN-only convenience).
-  - **Login mode** — one or more users configured via env vars.
-  - **API tokens** — one or more tokens configured via env vars for machine-to-machine use.
-  - *(Today only a single optional bearer token exists — needs extending to multi-token /
-    multi-user.)*
+`PrintJob` ([`core/db.py`](../src/labeljetty/core/db.py)) is deliberately generic so one model
+and one worker dispatch loop cover every payload type:
 
-### Features (UI + API parity)
+- `job_type` - one of `png` / `pdf` / `text` / `markdown` / `barcode` / `qrcode`.
+- `params` - a JSON dict (stored via a custom `SqlJsonText` type) carrying the per-type
+  parameters (e.g. the text and fit mode, the barcode type, the QR ECC level).
+- optional `input_file_name` - for the file-based types (PNG/PDF).
+- per-job `label_width_mm` / `label_height_mm` / `dpi` / `copies` - overriding the
+  `DEFAULT_LABEL_*` config when set.
 
-- Print: PDF, PNG, raw text, simple markdown, a number as a barcode, or text/URL as a QR
-  code.
-- Pick label size per job; fall back to a configurable default label size (env var) when
-  none is given.
-- Possibility to set label profiles (x and y size with a profile name e.g. "DHL Versandmarke", "Homebox Label")
-- Show job history / queue status and printer status (ready, paper out, etc.).
-- A label **preview** (render the bitmap and show it before printing) — saves wasted labels.
-- API: documented OpenAPI spec (FastAPI already generates it; expose/ship it).
+Sessions use `expire_on_commit=False` and the worker persists detached jobs via `session.merge`,
+so a job object stays usable across the request/worker boundary.
 
-### API gaps to close
+## Rendering
 
-- `/print/png` is currently a stub: it never writes the uploaded bytes to disk and builds a
-  filename from `uuid.uuid4` (the function object) instead of `uuid.uuid4()`.
-- No endpoints yet for pdf/text/markdown/barcode/qrcode, job status, or printer status.
+Everything ends up as a 1-bit bitmap printed through a shared `_render_and_print_image` path:
+dither → pad width to a multiple of 8 → emit `SIZE` / `CLS` / `BITMAP` / `PRINT`.
 
----
+- **PDF** is rendered with [`pypdfium2`](https://github.com/pypdfium2-team/pypdfium2) - no system
+  dependencies.
+- **QR codes** are rendered to a bitmap with [`segno`](https://github.com/heuer/segno), scaled to
+  fill the label and centered (optionally with an auto-sized caption) - also zero system deps.
+- **Barcodes** use `python-barcode` (Code128, EAN, UPC, Code39, ...).
+- **Text & markdown** auto-fit to the label by default (see
+  [auto-fit](advanced-usage.md#text-rendering--auto-fit)); markdown keeps `#`/`##` headings
+  proportionally larger.
 
-## Homebox integration (primary goal)
+Picking pure-wheel libraries for PDF and QR keeps the "minimal dependency" promise - the whole
+thing installs and runs on a Raspberry Pi without dragging in a system print stack.
 
-Homebox integration is a **self-contained, optional module**. The printer service works
-fully on its own; when a Homebox URL + API key are configured (and the module enabled), an
-extra "Homebox" section appears in the web UI. With nothing configured, there is no trace of
-Homebox in the app. This keeps the side-quest (generic TSPL printer) cleanly separable from
-the primary goal.
+## Authentication
 
-### Homebox API (v0.26.0+ — important)
+Auth is off by default (`AUTH_MODE=open`) for trusted-LAN convenience and on-demand
+(`protected`). The design is a **pluggable provider model** behind a single seam,
+`web/auth.py::require_access`, which returns a `Principal` (subject / kind / display name /
+claims) rather than a bare boolean. Two providers ship today and can be active at once:
 
-As of **Homebox v0.26.0**, items and locations were merged into a single **entity** model.
-The old `/v1/items*` and `/v1/locations*` endpoints are **gone**; integrations now use
-`/v1/entities*`. Design against this from the start:
+- `TokenAuthenticator` - multi-token `AUTH_TOKENS`, `Authorization: Bearer`, constant-time
+  comparison.
+- `SessionAuthenticator` - multi-user `AUTH_USERS`, a `/login` form, and a signed cookie via
+  Starlette's `SessionMiddleware`. Passwords are stdlib pbkdf2_sha256
+  ([`web/password.py`](../src/labeljetty/web/password.py) + the `labeljetty-hash-password` CLI).
 
-- **Auth:** static API keys (prefixed `hb_…`), sent as a bearer token
-  (`Authorization: Bearer hb_…`). A key inherits the access level of the user who created
-  it. The Homebox server admin must have set `HBOX_AUTH_API_KEY_PEPPER` (≥32 chars) for API
-  keys to function at all.
-- **Search items:** `GET /v1/entities?q=<query>` (returns items by default; paginated shape
-  with an `items` array).
-- **Search locations:** `GET /v1/entities?isLocation=true&q=<query>`.
-- **Entity summary** carries what a label needs: `name`, `assetId`, and `parent`
-  (the old `location` field is now `parent`). Subscribe to the `entity.mutation` WebSocket
-  event if we ever want live updates.
+Returning a `Principal` and centralising the check makes the layer **OIDC-ready**: OIDC slots in
+as a third provider reusing the same session, with no route changes. Browsers (Accept:
+text/html) get a `303 → /login`; API clients get `401`. Startup fails fast if `protected` is set
+with no providers, so you can't lock yourself out.
 
-The natural label is: **a QR code (linking to the entity's Homebox URL, or encoding the
-asset ID) plus human-readable text (name / asset ID).**
+See [Advanced usage → Authentication](advanced-usage.md#authentication) for configuration.
 
-### Integration paths
+## Homebox integration
 
-There are three ways to connect the two systems. **A** and **B** are the ones we build; **C**
-is a documented fallback.
+A **self-contained, optional module**, config-gated on `HOMEBOX_URL` + `HOMEBOX_API_KEY`. With
+nothing set, there is no trace of Homebox in the app - this keeps the generic-printer side-quest
+cleanly separable from the primary goal.
 
-**A. Printer → Homebox (pull) — the in-app module.**
-The web UI's Homebox section lets the user **search items and locations** (via
-`/v1/entities`), pick one, preview, and print **Homebox's own label** — fetched from its
-labelmaker API (`/v1/labelmaker/{item,location,asset}/{id}`, called *without* `print=true`
-so Homebox renders the image but does not run its own print command; we print the returned
-image ourselves). This keeps a single source of label rendering (Homebox's, controlled by
-its `HBOX_LABEL_MAKER_*` sizing) rather than maintaining a second renderer for the Homebox
-shape. *(Implemented this way per the maintainer's decision; the labelmaker output observed
-on v0.26 is a PNG.)*
+It targets **Homebox v0.26.0+**, where items and locations merged into a single **entity** model
+(`/v1/entities`; the old `/v1/items*` and `/v1/locations*` are gone). Three connection paths
+(pull / push / print-command) are documented in
+[Advanced usage → Homebox integration](advanced-usage.md#homebox-integration). The key design
+decision: the in-app *pull* path prints **Homebox's own label** (fetched from its labelmaker API),
+so there is one source of label rendering controlled by Homebox's `HBOX_LABEL_MAKER_*` sizing,
+rather than a second renderer to keep in sync.
 
-**B. External label service (push) — the blessed way to use Homebox's own print button.**
-Homebox can delegate label *rendering* to an HTTP service via
-`HBOX_LABEL_MAKER_LABEL_SERVICE_URL`: it sends a `GET` with `TitleText`, `DescriptionText`,
-`URL`, `Width`, `Height`, `Dpi`, `ComponentPadding`, … and expects an `image/*` back. We
-expose exactly such an endpoint, which:
+## Design principles & trade-offs
 
-1. renders the label with **our** engine, tuned to our stock (same renderer as path A), and
-2. **enqueues the print as a side effect**, then returns the image to Homebox.
+- **No CUPS, no vendor driver.** A single thermal printer doesn't need a spooler, PPDs, and a
+  print queue. Talking TSPL directly over USB is simpler to reason about and behaves identically
+  on every host.
+- **Lowest dependency cost possible.** Pure-wheel libraries everywhere (`pypdfium2`, `segno`,
+  `pillow`, `python-barcode`); the only system libs are libusb and a TrueType font. Runs happily
+  on a Pi.
+- **Generic core, optional integrations.** The printer service knows nothing about Homebox;
+  Homebox is a module that appears only when configured.
+- **One worker, one printer.** A single physical device is serialised behind a queue + worker, so
+  the concurrency story is trivial and correct. (Multi-printer is a possible future, not a current
+  target.)
+- **Status degrades gracefully.** Many cheap clones are write-only for status; the code treats an
+  unreadable status as "ready" and never blocks printing on it.
+- **Extractable printer library.** `printer/` has zero internal dependencies by design, so it can
+  become a standalone package if that's ever useful.
 
-This is elegant: one mechanism renders *and* prints, requires no script deployed on the
-Homebox host, and reuses our renderer for consistent output. Setup is a single env var on the
-Homebox side (`HBOX_LABEL_MAKER_LABEL_SERVICE_URL` → our endpoint).
-
-> **Caveat to verify before relying on the side-effect print:** confirm Homebox calls the
-> label-service URL **only on an explicit print action**, not on label *preview* /
-> regeneration. If it's also called for previews, side-effect printing would produce spurious
-> labels — in that case, fall back to path C (which only fires on the print button) or gate
-> our printing behind an explicit query flag. Also respect `HBOX_LABEL_MAKER_LABEL_SERVICE_TIMEOUT`
-> (default 30s): we only *enqueue* within the request and return promptly; we never block on
-> the physical print completing. If our service is down, Homebox's label creation/preview is
-> affected (it depends on our URL).
-
-**C. Print command (push, fallback) — `HBOX_LABEL_MAKER_PRINT_COMMAND`.**
-Homebox's per-entity print action renders a `label.png` server-side and runs a configured
-command with a `{{.FileName}}` placeholder. We make this turnkey with a **setup helper page**
-that, given the printer service's hostname/port, **generates a ready-to-paste bash script**:
-
-```sh
-#!/usr/bin/env sh
-# Set HBOX_LABEL_MAKER_PRINT_COMMAND to:  /path/to/this-script.sh {{.FileName}}
-curl -fsS -X POST "http://<printer-host>:<port>/api/print/png" \
-  -H "Authorization: Bearer <token-if-configured>" \
-  -F "file=@$1"
-```
-
-Alongside the script, the helper shows the **Homebox env-var hints** to match our label
-stock (all sized in **pixels**, derived from the user's mm + DPI):
-`HBOX_LABEL_MAKER_WIDTH`, `HBOX_LABEL_MAKER_HEIGHT`, `HBOX_LABEL_MAKER_PADDING`,
-`HBOX_LABEL_MAKER_FONT_SIZE`, and `HBOX_LABEL_MAKER_PRINT_COMMAND`.
-
-Prefer C over B when: the user wants Homebox's **native** label layout (Homebox renders, we
-just print the bytes); "print means print" semantics are required with zero risk of
-preview-triggered prints; or our service should not be a hard dependency of Homebox's
-label-creation flow. The trade-off is a small script deployed on the Homebox host.
-
-### Open questions to settle before building
-
-- Encode the entity's Homebox **URL** vs. the bare **asset ID** in the QR (URL is more useful
-  on a phone; asset ID is shorter/offline-friendly). Make it configurable.
-- A small, configurable **label template** for the Homebox label (which fields, font sizes,
-  QR position) so it fits the user's actual label dimensions.
-- Confirm the exact API base prefix on the target instance (`/api/v1/entities` vs
-  `/v1/entities`) and pagination/response field names against the live OpenAPI spec.
-
----
-
-## Configuration (env vars)
-
-Already present: app name, log level, listen host/port, sqlite path, image storage dir,
-single API token, job retention days, and a flexible `PRINTER_USB` selector
-(`serial:` / `path:` / `port:` / `vid:pid:` / `bus:addr:`).
-
-To add:
-- `DEFAULT_LABEL_WIDTH_MM`, `DEFAULT_LABEL_HEIGHT_MM`, `DEFAULT_DPI`.
-- Multi-token and multi-user auth config.
-- **Homebox module:** an enable flag, plus `HOMEBOX_URL` and `HOMEBOX_API_KEY` (the `hb_…`
-  key). The module activates only when these are set.
-- QR content choice (entity URL vs asset ID) and default label-template settings.
-
----
-
-## Current status (snapshot)
-
-| Area | State |
-|------|-------|
-| USB connection layer | Works (discovery strategies, lazy connect + endpoint setup, fast-fail on EACCES) |
-| PNG printing | Works |
-| Markdown / barcode / QR / composites | Works; text/markdown/QR **auto-fit** to the label (fill/width modes) |
-| PDF printing | **Implemented** (pypdfium2, no system deps) |
-| Raw-text helper | **Implemented** (`print_text`, auto-fit) |
-| Printer status (live) | **Fixed**; degrades gracefully — the dev printer (Poskey 420B) is write-only and never answers status, so status read returns None / "assume ready" and never blocks printing |
-| Job queue + worker | **Works for all payload types** (generalized `job_type`+`params`+file model, worker dispatch) |
-| REST API | **Complete:** print png/pdf/text/markdown/barcode/qrcode + `/jobs`, `/jobs/{id}`, `/worker/status`, `/printer/status` |
-| CLI test bench | **Added** (`testbench.py`): per-type subcommands, `pattern`, `status`, `probe`, `raw`, dry-run |
-| Web UI | **Done** — mobile-first HTMX + Jinja2 UI: print all types, label profiles, live preview, job + printer/worker status polling |
-| Auth | **Done** — `AUTH_MODE` open (default) / protected; pluggable provider model behind the central `require_access` seam returning a `Principal`: multi-token (Bearer) + multi-user (login form + signed-cookie session). Open is default with a fat README warning. Designed OIDC-ready (drop-in provider; OIDC callback reuses the session). |
-| Homebox integration (modular) | **Done** — config-gated: pull (search `/v1/entities`, then fetch + print **Homebox's own** label from `/v1/labelmaker/{kind}/{id}`), push label-service endpoint (`/api/homebox/label`, renders our engine + autoprint), and a setup-helper wizard generating the print-command script (host configurable) + `HBOX_LABEL_MAKER_*` env hints. Verified live against v0.26. |
-
----
-
-## Roadmap (suggested order)
-
-1. ✅ **DONE — Stabilize the library:** fixed the status/`receive` bugs, added `print_pdf`
-   (pypdfium2) and `print_text`, verified in `dry_run` and on-device. Status read found
-   unsupported on the dev printer (write-only USB) → now degrades gracefully.
-    1B. ✅ **DONE** — `testbench.py` CLI (`pattern` alignment/ruler diagnostic, per-type
-    subcommands, `probe`/`raw` for status debugging, dry-run). Confirmed positioning/sizing
-    on-device; added auto-fit so text/QR scale to the configured label.
-2. ✅ **DONE — Finish the API:** `/print/png` stores + enqueues; added pdf/text/markdown/
-   barcode/qrcode endpoints, plus `/jobs`, `/jobs/{id}`, `/worker/status`, `/printer/status`.
-3. ✅ **DONE — Generalize the job model:** typed `PrintJob` (`job_type`+`params`+optional
-   file + per-job geometry/copies); worker dispatches every payload type.
-4. ✅ **DONE — Web UI:** mobile-first HTMX + Jinja2 page (`/`) to print every type + label
-   profiles + live preview + queue/printer/worker status polling. No build step; served by
-   FastAPI from `templates/` + `static/`.
-5. ✅ **DONE — Homebox module (pull):** config-gated. Search `/v1/entities` for
-   items/locations, then **fetch and print Homebox's own label** from
-   `/v1/labelmaker/{item,location,asset}/{id}` (we do not pass `print=true`; we print the
-   returned image ourselves). Preview shows Homebox's label; results link back to Homebox.
-6. ✅ **DONE — Homebox push path:** external-label-service endpoint `/api/homebox/label`
-   (`HBOX_LABEL_MAKER_LABEL_SERVICE_URL`) renders with our engine + enqueues the print
-   (toggle: `HOMEBOX_LABEL_SERVICE_AUTOPRINT`), plus a setup-helper **wizard**
-   (`/ui/homebox/setup`) that generates the `HBOX_LABEL_MAKER_PRINT_COMMAND` script
-   (printer host configurable) and the `HBOX_LABEL_MAKER_*` env-var hints.
-7. ✅ **DONE — Auth:** `AUTH_MODE` open (default, with a prominent README warning) / protected,
-   selected by config. Behind the central `require_access` seam (now returning a `Principal`)
-   sits a pluggable provider model: **multi-token** (`AUTH_TOKENS`, Bearer) for machines and
-   **multi-user** (`AUTH_USERS`, login form → signed-cookie session via `SessionMiddleware`)
-   for humans; both can be active at once. Passwords are pbkdf2 (stdlib) with a
-   `labeljetty-hash-password` CLI. Browsers redirect to `/login`; API clients get 401.
-   Designed **OIDC-ready** — OIDC slots in as a third provider reusing the same session, no
-   route changes. (`API_ACCESS_TOKEN` removed.)
-8. **Packaging:** systemd unit / container image, udev rule for non-root USB access on the
-   Pi, setup docs. ← **NEXT**
-
----
-
-## Optional / stretch goals
-
-- **Standard network-printer interface** so the printer can be used from native OS print
-  dialogs. Feasibility assessment:
-  - **Full IPP Everywhere (driverless) — treat as a separate project.** Showing up
-    automatically in the OS "Add Printer" dialog with no driver requires a real IPP server
-    (binary IPP attribute protocol: Get-Printer-Attributes, Create-Job, Send-Document,
-    Get-Jobs, Cancel-Job…), `_ipp._tcp` mDNS/DNS-SD advertisement with correct TXT records,
-    **and** decoding the raster formats clients actually send (PWG Raster / Apple Raster /
-    PDF) before converting to TSPL. The raster decode + conformance to get the OS to accept
-    us is the hard part. This is project-sized and pulls in dependencies that fight the
-    "minimal" principle — keep it as its own optional module/repo, not part of the core.
-  - **Raw port-9100 (JetDirect) socket — a cheap stepping stone.** A tiny TCP listener that
-    pipes the incoming stream into the renderer/printer is easy to build, but the OS won't
-    auto-discover it: the user must add it manually and deal with page size/driver, so it
-    mostly serves power users. Reasonable as a low-effort interim if a native path is wanted
-    before IPP exists.
-- A small **TSPL playground** endpoint to send raw TSPL for debugging.
-- Label **template library** (named, reusable layouts beyond the Homebox one).
-- Multi-printer support (the architecture currently assumes one printer).
-
----
-
-## Non-goals (for now)
+## Non-goals
 
 - Replacing CUPS or being a full print spooler.
-- Supporting non-TSPL printer languages (ZPL/EPL) — could be a future abstraction, not a
-  current target.
+- Supporting non-TSPL printer languages (ZPL/EPL) - could be a future abstraction, not a current
+  target.
 - Cloud / multi-tenant hosting; this is a single-LAN, single-printer appliance.
+
+### Stretch ideas (not committed)
+
+- A **raw port-9100 (JetDirect) socket** so power users can add it as a network printer manually.
+  (Full IPP Everywhere / driverless discovery is project-sized and fights the "minimal" principle
+  - better as its own repo.)
+- A label **template library** (named, reusable layouts beyond the Homebox one).
+- **Multi-printer** support.

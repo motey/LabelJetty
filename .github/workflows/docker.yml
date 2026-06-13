@@ -55,3 +55,13 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Push the slim Docker Hub overview/README (links back to GitHub for full docs).
+      - name: Update Docker Hub description
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: motey/labeljetty
+          short-description: "Network-accessible printing for USB TSPL thermal label printers (web UI + REST API)."
+          readme-filepath: ./docs/README.docker.md

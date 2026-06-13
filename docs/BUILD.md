@@ -6,7 +6,7 @@ this document is the deeper reference.
 
 ## Overview
 
-There are three build outputs, all driven from a single source of truth — the **git tag**:
+There are three build outputs, all driven from a single source of truth - the **git tag**:
 
 | Output         | Built by                          | Trigger              |
 | -------------- | --------------------------------- | -------------------- |
@@ -33,7 +33,7 @@ How the version flows at build time:
   never published.
 
 A build hook writes the resolved version into `src/labeljetty/_version.py`
-(`[tool.hatch.build.hooks.vcs]`). That file is **generated and gitignored** —
+(`[tool.hatch.build.hooks.vcs]`). That file is **generated and gitignored** -
 regenerated on every build, never edited or committed.
 
 ### Runtime resolution
@@ -41,11 +41,11 @@ regenerated on every build, never edited or committed.
 [`src/labeljetty/version.py`](../src/labeljetty/version.py) `get_version()` resolves the
 running version in priority order:
 
-1. **`LABELJETTY_VERSION` env var** — how the Docker image is branded (see below).
-2. **Installed package metadata** — `importlib.metadata.version("labeljetty")`, set from
+1. **`LABELJETTY_VERSION` env var** - how the Docker image is branded (see below).
+2. **Installed package metadata** - `importlib.metadata.version("labeljetty")`, set from
    the wheel that `hatch-vcs` stamped at build time.
-3. **`_version.py`** — the generated file, present in an editable/dev install.
-4. **`0.0.0+unknown`** — running from a raw source tree with no metadata.
+3. **`_version.py`** - the generated file, present in an editable/dev install.
+4. **`0.0.0+unknown`** - running from a raw source tree with no metadata.
 
 This single function backs `__version__`, the FastAPI `app.version`, the
 `GET /api/version` endpoint, and the web-UI footer.
@@ -64,13 +64,13 @@ See [`Dockerfile`](../Dockerfile). Key points:
 - Base `python:3.11-slim`; runtime system deps are **`libusb-1.0-0`** (pyusb talks to the
   printer over it) and **`fonts-dejavu-core`** (text/markdown rendering uses DejaVu Sans).
 - Dependencies are installed with `uv sync --frozen --no-dev --no-editable` from the
-  committed `uv.lock` — reproducible, no dev/test tooling in the image.
+  committed `uv.lock` - reproducible, no dev/test tooling in the image.
 - **Version branding without `.git`:** the image is built with `--build-arg VERSION=<tag>`.
   The Dockerfile maps that to two env vars:
-  - `SETUPTOOLS_SCM_PRETEND_VERSION` — lets `hatch-vcs` resolve the version during
+  - `SETUPTOOLS_SCM_PRETEND_VERSION` - lets `hatch-vcs` resolve the version during
     `uv sync` even though the `.git` directory is excluded from the build context (see
     [`.dockerignore`](../.dockerignore)).
-  - `LABELJETTY_VERSION` — read at runtime by `get_version()` (priority 1 above), so the
+  - `LABELJETTY_VERSION` - read at runtime by `get_version()` (priority 1 above), so the
     container reports its release.
 - Container-friendly defaults: binds `0.0.0.0:8888`, stores the SQLite DB and images under
   the `/data` volume (`SQLITE_PATH`, `IMAGE_STORAGE_DIRECTORY`). `PRINTER_USB` has no
@@ -81,7 +81,7 @@ See [`Dockerfile`](../Dockerfile). Key points:
 Built for `linux/amd64` and `linux/arm64` and pushed as one manifest list, so clients pull
 the matching arch automatically. `arm64` covers 64-bit Raspberry Pi OS on Pi 3/4/5. 32-bit
 (`arm/v7` / `arm/v6`: 32-bit Pi OS, Pi Zero/Zero 2 W, Pi 1/2) is intentionally **not** built
-— it roughly doubles emulated CI build time and depends on `arm/v7` wheels existing for
+- it roughly doubles emulated CI build time and depends on `arm/v7` wheels existing for
 `pypdfium2`/`pillow`. Revisit if an issue asks for it: add the platform to the `platforms:`
 list in [`docker.yml`](../.github/workflows/docker.yml) and verify the dependency wheels
 resolve under QEMU.
@@ -90,7 +90,7 @@ resolve under QEMU.
 
 [`build-container.sh`](../build-container.sh) is for quick hands-on testing. It derives the
 `VERSION` build-arg from git: an exact version tag if HEAD is on one, otherwise a PEP440-valid
-local marker (`0.0.0+local.<hash>`) — raw `git describe` output (`<hash>-dirty`) is *not* a
+local marker (`0.0.0+local.<hash>`) - raw `git describe` output (`<hash>-dirty`) is *not* a
 valid version and would break the build. Override the image name/tag via `IMAGE=` / `TAG=`
 env vars; extra args pass through to `docker build`.
 
@@ -101,7 +101,7 @@ All under [`.github/workflows/`](../.github/workflows/). `pypi.yml` and `docker.
 
 ### `pypi.yml`
 
-1. Checkout with `fetch-depth: 0` — `hatch-vcs` needs the tag history, a shallow clone hides
+1. Checkout with `fetch-depth: 0` - `hatch-vcs` needs the tag history, a shallow clone hides
    it.
 2. `uv build` → sdist + wheel (version from the tag).
 3. `uv publish --token $PYPI_API_TOKEN`.
@@ -116,7 +116,7 @@ All under [`.github/workflows/`](../.github/workflows/). `pypi.yml` and `docker.
 
 ### `docker-dev.yml`
 
-Bleeding-edge `:dev` channel, on every push to `main`. **`linux/amd64` only** — no QEMU, so
+Bleeding-edge `:dev` channel, on every push to `main`. **`linux/amd64` only** - no QEMU, so
 it's fast (the multi-arch images come from releases via `docker.yml`). The version is branded
 as `0.0.0+dev.<short-sha>`. Not for production.
 

@@ -4,7 +4,8 @@ name = "labeljetty"
 # Tags are plain "0.0.1" (an optional leading "v" is accepted too).
 dynamic = ["version"]
 description = "Network-accessible printing for USB TSPL thermal label printers (library + REST API + web UI)."
-readme = "README.md"
+# PyPI shows a slimmer README than the GitHub one; it links back to the repo.
+readme = "docs/README.pypi.md"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.124.0",
