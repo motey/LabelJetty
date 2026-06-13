@@ -1,6 +1,7 @@
 from typing import Optional, Literal, Dict, Generator, Any
 from datetime import datetime
 from sqlmodel import SQLModel, Field, Column, Session, create_engine
+from sqlalchemy import String
 from contextlib import contextmanager
 from utils import SqlJsonText
 from config import Config
@@ -17,13 +18,32 @@ DATABASE_URL = f"sqlite:///{config.SQLITE_PATH}"
 engine = create_engine(DATABASE_URL, echo=False)
 
 
+JobType = Literal["png", "pdf", "text", "markdown", "barcode", "qrcode"]
+
+
 class PrintJob(SQLModel, table=True):
     id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
-    png_file_name: Optional[str] = None
+
+    job_type: JobType = Field(
+        sa_column=Column(String), description="Which renderer the worker should use"
+    )
+    # Type-specific parameters (text content, barcode_type, ecc_level, font_size, ...)
+    params: Dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(SqlJsonText),
+    )
+    # Stored upload for file-based jobs (png/pdf); None for parameter-only jobs.
+    input_file_name: Optional[str] = None
+
+    # Per-job label geometry override; None → fall back to config defaults.
+    label_width_mm: Optional[int] = None
+    label_height_mm: Optional[int] = None
+    dpi: Optional[int] = None
+    copies: int = 1
 
     error: Optional[str] = None
     printer_status_on_finished: Optional[TSPLPrinterStatusMessage] = Field(
-        default_factory=dict,
+        default=None,
         sa_column=Column(SqlJsonText),
     )
     created_at: datetime = Field(default_factory=datetime.now)
@@ -40,8 +60,10 @@ class PrintJob(SQLModel, table=True):
         else:
             return "done"
 
-    def get_png_file_path(self) -> Path:
-        return Path(f"{config.IMAGE_STORAGE_DIRECTORY}/{self.png_file_name}")
+    def get_input_file_path(self) -> Optional[Path]:
+        if self.input_file_name is None:
+            return None
+        return Path(f"{config.IMAGE_STORAGE_DIRECTORY}/{self.input_file_name}")
 
     @field_serializer("printer_status_on_finished")
     def serialize_printer_status(
@@ -80,8 +102,13 @@ def init_db():
 # Session management
 @contextmanager
 def get_session() -> Generator[Session, None, None]:
-    """Context manager for database sessions"""
-    session = Session(engine)
+    """Context manager for database sessions.
+
+    ``expire_on_commit=False`` keeps attributes populated after commit so jobs can
+    be safely returned/serialized once the session has closed (FastAPI responses,
+    the worker handing a fetched job to the printer).
+    """
+    session = Session(engine, expire_on_commit=False)
     try:
         yield session
         session.commit()

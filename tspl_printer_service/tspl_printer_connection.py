@@ -169,31 +169,22 @@ class TSPLPrinterConnectionUSB:
         self.retry_interval: float = retry_interval
 
     # ---------------------------------------------------------
-    #  Connect (auto-detect if vendor/product not given)
+    #  Connect: claim the (already-discovered) device + endpoints
     # ---------------------------------------------------------
-    def connect(self) -> bool:
+    def connect(self, max_retries: int = 5) -> bool:
+        """
+        Configure ``self.dev`` and resolve the bulk IN/OUT endpoints.
+
+        The device itself is selected by the ``by_*`` class methods; this only
+        sets up the USB configuration and endpoints so ``send``/``receive`` can
+        talk to it. Retries a few times on transient USB errors.
+        """
+        if self.dev is None:
+            raise RuntimeError("No USB device to connect to.")
+
+        attempt = 0
         while True:
             try:
-                if self.vendor and self.product:
-                    # Manual device selection
-                    self.dev = usb.core.find(
-                        idVendor=self.vendor, idProduct=self.product
-                    )
-                    if self.dev is None:
-                        raise ValueError(
-                            f"can not find USB device at {self.vendor}:{self.product}"
-                        )
-
-                else:
-                    # Auto-detect TSPL printer
-                    print("Searching for TSPL printer...")
-                    self.dev = self.auto_detect()
-
-                if self.dev is None:
-                    print("No TSPL printer found. Waiting...")
-                    time.sleep(self.retry_interval)
-                    continue
-
                 # Detach any kernel drivers
                 try:
                     if self.dev.is_kernel_driver_active(0):
@@ -205,7 +196,7 @@ class TSPLPrinterConnectionUSB:
                 cfg: Configuration = self.dev.get_active_configuration()
                 intf: Interface = cfg[(0, 0)]
 
-                # Set endpoints
+                # Resolve endpoints by direction
                 self.ep_out = usb.util.find_descriptor(
                     intf,
                     custom_match=lambda e: usb.util.endpoint_direction(
@@ -230,22 +221,75 @@ class TSPLPrinterConnectionUSB:
                 print("Connected to TSPL printer.")
                 return True
 
-            except Exception as e:
-                print(f"Connection error: {e}. Retrying...")
+            except USBError as e:
+                # Permission errors (EACCES) never resolve by retrying — fail fast
+                # with a hint instead of looping and dumping a stack trace.
+                if e.errno == 13:
+                    raise PermissionError(
+                        "Access denied opening the USB printer (EACCES). Grant USB "
+                        "access via a udev rule (or run with sudo) — see the "
+                        "'Printer setup' section of the README."
+                    ) from e
+                attempt += 1
+                if attempt >= max_retries:
+                    raise
+                print(f"Connection error: {e}. Retrying ({attempt}/{max_retries})...")
                 time.sleep(self.retry_interval)
+
+            except Exception as e:
+                attempt += 1
+                if attempt >= max_retries:
+                    raise
+                print(f"Connection error: {e}. Retrying ({attempt}/{max_retries})...")
+                time.sleep(self.retry_interval)
+
+    def disconnect(self) -> None:
+        """Release the USB device so another opener can claim it.
+
+        Critical for the single-printer design: the worker *owns* the printer,
+        but the status endpoints also open the device. If a status probe never
+        releases it, the kernel keeps the interface claimed and every subsequent
+        open (the worker's print, the next probe) fails with EBUSY ("Resource
+        busy") — producing a retry flood. Always pair an open with a
+        ``disconnect`` (try/finally).
+        """
+        if self.dev is None:
+            return
+        try:
+            usb.util.dispose_resources(self.dev)
+        except Exception:
+            pass
+        self.ep_out = None
+        self.ep_in = None
+
+    def __enter__(self) -> Self:
+        self.connect()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.disconnect()
+
+    @staticmethod
+    def _to_wire(cmd: str | bytes, raw: bool) -> bytes:
+        """Encode a command for the USB OUT endpoint.
+
+        ``raw=True`` sends the bytes exactly as given — required for real-time
+        TSPL commands (e.g. ``<ESC>!?``) which must NOT be newline-terminated.
+        """
+        if raw:
+            return cmd if isinstance(cmd, bytes) else cmd.encode("ascii")
+        if isinstance(cmd, str):
+            return (cmd.strip() + "\n").encode("ascii")
+        return cmd.strip(b"\n") + b"\n"
 
     # ---------------------------------------------------------
     #  Send a TSPL command (auto reconnect if needed)
     # ---------------------------------------------------------
-    def send(self, cmd: str | bytes) -> None:
-        if not self.dev:
+    def send(self, cmd: str | bytes, raw: bool = False) -> None:
+        if self.ep_out is None:
             self.connect()
 
-        # Ensure cmd is bytes
-        if isinstance(cmd, str):
-            data: bytes = (cmd.strip() + "\n").encode("ascii")
-        else:
-            data = cmd.strip(b"\n") + b"\n"
+        data = self._to_wire(cmd, raw)
 
         try:
             self.ep_out.write(data)
@@ -258,9 +302,11 @@ class TSPLPrinterConnectionUSB:
     # ---------------------------------------------------------
     #  Send multiple commands
     # ---------------------------------------------------------
-    def send_many(self, commands: Union[List[str], tuple[str, ...]]) -> None:
+    def send_many(
+        self, commands: Union[List[str], tuple[str, ...]], raw: bool = False
+    ) -> None:
         for c in commands:
-            self.send(c)
+            self.send(c, raw=raw)
 
     def receive(self, timeout: int = 1000, max_length: int = 1024) -> Optional[bytes]:
         """
@@ -330,9 +376,9 @@ class TSPLPrinterConnectionUSB:
             return None
 
     def query(
-        self, cmd: str, timeout: int = 1000, max_length: int = 1024
+        self, cmd: str | bytes, timeout: int = 1000, max_length: int = 1024, raw: bool = False
     ) -> Optional[bytes]:
-        self.send(cmd)
+        self.send(cmd, raw=raw)
         time.sleep(0.1)  # Brief delay for printer to process
         return self.receive(timeout=timeout, max_length=max_length)
 

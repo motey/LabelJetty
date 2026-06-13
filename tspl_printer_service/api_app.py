@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from fastapi import FastAPI
 
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from pathlib import Path
 
@@ -14,9 +15,12 @@ from fastapi.openapi.utils import get_openapi
 
 
 from api_routes import fast_api_router
+from ui_routes import ui_router
 
 from log import get_logger
 from config import Config
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 log = get_logger()
 config = Config()
@@ -118,8 +122,11 @@ class FastApiAppContainer:
         # )
 
     def _mount_routers(self):
-        self.app.include_router(
-            fast_api_router, tags=["Health"], prefix=self.url_prefix
+        self.app.include_router(fast_api_router, prefix=self.url_prefix)
+        # Web UI (server-rendered HTMX) mounted at the root.
+        self.app.include_router(ui_router)
+        self.app.mount(
+            "/static", StaticFiles(directory=STATIC_DIR), name="static"
         )
 
 

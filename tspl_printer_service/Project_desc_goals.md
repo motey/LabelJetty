@@ -109,7 +109,7 @@ Goal: a clean, importable Python library that is the *only* thing that knows TSP
 
 ### Base
 
-- Desktop **and** mobile friendly UI.
+- Desktop **and** mobile friendly modern UI.
 - Auth modes, selectable by configuration:
   - **Open mode** — no login (LAN-only convenience).
   - **Login mode** — one or more users configured via env vars.
@@ -123,6 +123,7 @@ Goal: a clean, importable Python library that is the *only* thing that knows TSP
   code.
 - Pick label size per job; fall back to a configurable default label size (env var) when
   none is given.
+- Possibility to set label profiles (x and y size with a profile name e.g. "DHL Versandmarke", "Homebox Label")
 - Show job history / queue status and printer status (ready, paper out, etc.).
 - A label **preview** (render the bitmap and show it before printing) — saves wasted labels.
 - API: documented OpenAPI spec (FastAPI already generates it; expose/ship it).
@@ -170,9 +171,13 @@ is a documented fallback.
 
 **A. Printer → Homebox (pull) — the in-app module.**
 The web UI's Homebox section lets the user **search items and locations** (via
-`/v1/entities`), pick one, preview, and print a label that *we* render — tuned to the
-configured label stock (QR of the entity URL + name + asset ID). This is the richest,
-most controllable path and the main deliverable of the module.
+`/v1/entities`), pick one, preview, and print **Homebox's own label** — fetched from its
+labelmaker API (`/v1/labelmaker/{item,location,asset}/{id}`, called *without* `print=true`
+so Homebox renders the image but does not run its own print command; we print the returned
+image ourselves). This keeps a single source of label rendering (Homebox's, controlled by
+its `HBOX_LABEL_MAKER_*` sizing) rather than maintaining a second renderer for the Homebox
+shape. *(Implemented this way per the maintainer's decision; the labelmaker output observed
+on v0.26 is a PNG.)*
 
 **B. External label service (push) — the blessed way to use Homebox's own print button.**
 Homebox can delegate label *rendering* to an HTTP service via
@@ -249,36 +254,48 @@ To add:
 
 | Area | State |
 |------|-------|
-| USB connection layer | Works (multiple discovery strategies, reconnect) |
+| USB connection layer | Works (discovery strategies, lazy connect + endpoint setup, fast-fail on EACCES) |
 | PNG printing | Works |
-| Markdown / barcode / QR / composites | Works (basic) |
-| PDF printing | Not implemented |
-| Raw-text helper | Only via markdown |
-| Printer status (live) | Buggy / unverified against hardware |
-| Job queue + worker | Works for PNG only |
-| REST API | Only `/print/png`, and it's a stub |
-| Web UI | Not started |
-| Auth | Single optional token only |
-| Homebox integration (modular) | Not started — design targets v0.26 `/v1/entities` API |
+| Markdown / barcode / QR / composites | Works; text/markdown/QR **auto-fit** to the label (fill/width modes) |
+| PDF printing | **Implemented** (pypdfium2, no system deps) |
+| Raw-text helper | **Implemented** (`print_text`, auto-fit) |
+| Printer status (live) | **Fixed**; degrades gracefully — the dev printer (Poskey 420B) is write-only and never answers status, so status read returns None / "assume ready" and never blocks printing |
+| Job queue + worker | **Works for all payload types** (generalized `job_type`+`params`+file model, worker dispatch) |
+| REST API | **Complete:** print png/pdf/text/markdown/barcode/qrcode + `/jobs`, `/jobs/{id}`, `/worker/status`, `/printer/status` |
+| CLI test bench | **Added** (`testbench.py`): per-type subcommands, `pattern`, `status`, `probe`, `raw`, dry-run |
+| Web UI | **Done** — mobile-first HTMX + Jinja2 UI: print all types, label profiles, live preview, job + printer/worker status polling |
+| Auth | Single optional token only (now via a central `require_access` seam on every API + UI route); multi-mode (open/token/login) still pending |
+| Homebox integration (modular) | **Done** — config-gated: pull (search `/v1/entities`, then fetch + print **Homebox's own** label from `/v1/labelmaker/{kind}/{id}`), push label-service endpoint (`/api/homebox/label`, renders our engine + autoprint), and a setup-helper wizard generating the print-command script (host configurable) + `HBOX_LABEL_MAKER_*` env hints. Verified live against v0.26. |
 
 ---
 
 ## Roadmap (suggested order)
 
-1. **Stabilize the library:** fix the status/`receive` bugs, add a real `print_pdf` and a
-   `print_text` helper, verify against the Vretti in `dry_run` and on-device.
-    1B. Provide a testsetup to quickly test the library against the printer. We want find out if positioning, sizing and such stuff is correct.
-2. **Finish the API:** make `/print/png` actually store + enqueue; add endpoints for
-   pdf/text/markdown/barcode/qrcode; add job-status and printer-status endpoints.
-3. **Generalize the job model** so the worker can handle every payload type.
-4. **Web UI:** mobile-first page to print + preview + see queue/printer status.
-5. **Homebox module (pull):** optional, config-gated feature — search `/v1/entities` for
-   items/locations, select, preview, and print a label rendered to our stock.
-6. **Homebox push path:** expose the external-label-service endpoint
-   (`HBOX_LABEL_MAKER_LABEL_SERVICE_URL`) that renders to our stock + enqueues the print, and
-   ship the fallback setup-helper page that generates the `HBOX_LABEL_MAKER_PRINT_COMMAND`
-   script + shows the `HBOX_LABEL_MAKER_*` env-var hints.
-7. **Auth:** multi-token + multi-user + open mode, selected by config.
+1. ✅ **DONE — Stabilize the library:** fixed the status/`receive` bugs, added `print_pdf`
+   (pypdfium2) and `print_text`, verified in `dry_run` and on-device. Status read found
+   unsupported on the dev printer (write-only USB) → now degrades gracefully.
+    1B. ✅ **DONE** — `testbench.py` CLI (`pattern` alignment/ruler diagnostic, per-type
+    subcommands, `probe`/`raw` for status debugging, dry-run). Confirmed positioning/sizing
+    on-device; added auto-fit so text/QR scale to the configured label.
+2. ✅ **DONE — Finish the API:** `/print/png` stores + enqueues; added pdf/text/markdown/
+   barcode/qrcode endpoints, plus `/jobs`, `/jobs/{id}`, `/worker/status`, `/printer/status`.
+3. ✅ **DONE — Generalize the job model:** typed `PrintJob` (`job_type`+`params`+optional
+   file + per-job geometry/copies); worker dispatches every payload type.
+4. ✅ **DONE — Web UI:** mobile-first HTMX + Jinja2 page (`/`) to print every type + label
+   profiles + live preview + queue/printer/worker status polling. No build step; served by
+   FastAPI from `templates/` + `static/`.
+5. ✅ **DONE — Homebox module (pull):** config-gated. Search `/v1/entities` for
+   items/locations, then **fetch and print Homebox's own label** from
+   `/v1/labelmaker/{item,location,asset}/{id}` (we do not pass `print=true`; we print the
+   returned image ourselves). Preview shows Homebox's label; results link back to Homebox.
+6. ✅ **DONE — Homebox push path:** external-label-service endpoint `/api/homebox/label`
+   (`HBOX_LABEL_MAKER_LABEL_SERVICE_URL`) renders with our engine + enqueues the print
+   (toggle: `HOMEBOX_LABEL_SERVICE_AUTOPRINT`), plus a setup-helper **wizard**
+   (`/ui/homebox/setup`) that generates the `HBOX_LABEL_MAKER_PRINT_COMMAND` script
+   (printer host configurable) and the `HBOX_LABEL_MAKER_*` env-var hints.
+7. **Auth:** multi-token + multi-user + open mode, selected by config. ← **NEXT** (deferred to
+   its own session; today a single optional bearer token gates all routes via the central
+   `require_access` seam in `api_auth.py`).
 8. **Packaging:** systemd unit / container image, udev rule for non-root USB access on the
    Pi, setup docs.
 

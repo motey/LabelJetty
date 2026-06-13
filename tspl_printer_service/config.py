@@ -1,7 +1,7 @@
 import os
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, List, Self
 from pathlib import Path
-from pydantic import Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings
 from typing import Literal, Optional
 
@@ -11,6 +11,15 @@ if TYPE_CHECKING:
 env_file_path = os.environ.get(
     "TSPL_PRINTER_WEBAPI_DOT_ENV_FILE", Path(__file__).parent / ".env"
 )
+
+
+class LabelProfile(BaseModel):
+    """A named label stock (width × height in mm), selectable in the web UI."""
+
+    name: str
+    width_mm: int
+    height_mm: int
+    dpi: Optional[int] = None
 
 
 class Config(BaseSettings):
@@ -40,6 +49,56 @@ class Config(BaseSettings):
         default=100,
         description="Old job entries in the database will be removed with associated files.",
     )
+    # Default label geometry — used when a print job does not specify its own.
+    DEFAULT_LABEL_WIDTH_MM: int = Field(default=100)
+    DEFAULT_LABEL_HEIGHT_MM: int = Field(default=30)
+    DEFAULT_DPI: int = Field(default=203)
+    # Named label profiles selectable in the web UI, as a JSON list, e.g.
+    #   LABEL_PROFILES='[{"name":"Homebox","width_mm":57,"height_mm":32}]'
+    # The server default geometry is always offered as a "Default" profile too.
+    LABEL_PROFILES: List[LabelProfile] = Field(default_factory=list)
+
+    # --- Homebox integration (optional module) ------------------------------ #
+    # The module's UI section + endpoints appear only when HOMEBOX_URL and
+    # HOMEBOX_API_KEY are both set (and HOMEBOX_ENABLED is true).
+    HOMEBOX_ENABLED: bool = Field(default=True)
+    HOMEBOX_URL: Optional[str] = Field(
+        default=None, description="Base URL of the Homebox server, e.g. https://box.example.com"
+    )
+    HOMEBOX_API_KEY: Optional[str] = Field(
+        default=None, description="Homebox API key (prefixed 'hb_…')."
+    )
+    HOMEBOX_API_PREFIX: str = Field(
+        default="/api/v1",
+        description="API path prefix on the Homebox server (entities live at <prefix>/entities).",
+    )
+    HOMEBOX_ENTITY_URL_TEMPLATE: str = Field(
+        default="/item/{id}",
+        description="Web path (appended to HOMEBOX_URL) an entity opens at; '{id}' is substituted. Used for the QR link.",
+    )
+    HOMEBOX_LABEL_SERVICE_AUTOPRINT: bool = Field(
+        default=True,
+        description=(
+            "For the push 'external label service' endpoint: also enqueue the print "
+            "as a side effect of Homebox requesting the label image. Disable if your "
+            "Homebox build calls the label-service URL for previews too (would cause "
+            "spurious prints) — then use the print-command script (path C) instead."
+        ),
+    )
+
+    def homebox_configured(self) -> bool:
+        """True when the Homebox module should be active."""
+        return bool(self.HOMEBOX_ENABLED and self.HOMEBOX_URL and self.HOMEBOX_API_KEY)
+
+    def get_label_profiles(self) -> List[LabelProfile]:
+        """Configured profiles, preceded by the server-default geometry."""
+        default = LabelProfile(
+            name="Default",
+            width_mm=self.DEFAULT_LABEL_WIDTH_MM,
+            height_mm=self.DEFAULT_LABEL_HEIGHT_MM,
+            dpi=self.DEFAULT_DPI,
+        )
+        return [default, *self.LABEL_PROFILES]
     # USB Printer - Choose ONE of these methods:
     PRINTER_USB: str = Field(
         description=(

@@ -189,44 +189,117 @@ class PrintService:
                 time.sleep(5)
 
     def get_next_print_job(self) -> Optional[PrintJob]:
-        """Get oldest queued job"""
+        """Get oldest queued job (returned detached but with all attributes loaded)."""
         with get_session() as session:
             stmt = (
                 select(PrintJob)
                 .where(is_(PrintJob.started_at, None))
                 .order_by(PrintJob.created_at)
             )
-            return session.exec(stmt).first()
+            job = session.exec(stmt).first()
+            if job is not None:
+                # Detach before the context manager commits (which would expire the
+                # instance and break attribute access after the session closes).
+                session.expunge(job)
+            return job
 
     def print_job(self, job: PrintJob):
-        """Execute print job"""
+        """Execute a print job by dispatching on its type."""
+        con = None
         try:
             job.started_at = datetime.now()
             self.save_print_job(job)
 
             con = config.get_printer_connection()
-            printer = TSPLPrinter(connection=con)
+            con.connect()
+            printer = TSPLPrinter(
+                connection=con,
+                label_width_mm=job.label_width_mm or config.DEFAULT_LABEL_WIDTH_MM,
+                label_height_mm=job.label_height_mm or config.DEFAULT_LABEL_HEIGHT_MM,
+                dpi=job.dpi or config.DEFAULT_DPI,
+            )
 
             printer.wait_until_ready(timeout=60)
-            printer.print_png(job.get_png_file_path())
+            self._dispatch(printer, job)
             printer.wait_until_ready(10)
 
             job.printer_status_on_finished = printer.get_status()
             job.error = printer.get_error_message()
-            job.finished_at = datetime.now()
 
         except Exception as e:
             log.error(f"Print job failed: {e}")
-            job.status = "failed"
             job.error = str(e)
         finally:
+            # Release the USB device so status probes / the next job can claim it.
+            if con is not None:
+                con.disconnect()
             job.finished_at = datetime.now()
             self.save_print_job(job)
 
+    @staticmethod
+    def _dispatch(printer: TSPLPrinter, job: PrintJob):
+        """Route a job to the matching TSPLPrinter renderer."""
+        params: dict = job.params or {}
+        copies: int = job.copies or 1
+        job_type = job.job_type
+
+        if job_type == "png":
+            printer.print_png(
+                job.get_input_file_path(),
+                fit=params.get("fit", "fit"),
+                copies=copies,
+            )
+        elif job_type == "pdf":
+            printer.print_pdf(
+                job.get_input_file_path(),
+                page=params.get("page", 0),
+                fit=params.get("fit", "fit"),
+                copies=copies,
+            )
+        elif job_type == "text":
+            printer.print_text(
+                params["text"],
+                font_size=params.get("font_size"),
+                fit=params.get("fit", "fill"),
+                copies=copies,
+            )
+        elif job_type == "markdown":
+            printer.print_markdown(params["text"], fit=params.get("fit", "fill"))
+        elif job_type == "barcode":
+            if params.get("text"):
+                printer.print_barcode_with_text(
+                    params["data"],
+                    text=params["text"],
+                    barcode_type=params.get("barcode_type", "128"),
+                    copies=copies,
+                )
+            else:
+                printer.print_barcode(
+                    params["data"],
+                    barcode_type=params.get("barcode_type", "128"),
+                    copies=copies,
+                )
+        elif job_type == "qrcode":
+            if params.get("text"):
+                printer.print_qrcode_with_text(
+                    params["data"],
+                    text=params["text"],
+                    ecc_level=params.get("ecc_level", "M"),
+                    copies=copies,
+                )
+            else:
+                printer.print_qrcode(
+                    params["data"],
+                    ecc_level=params.get("ecc_level", "M"),
+                    copies=copies,
+                )
+        else:
+            raise ValueError(f"Unknown job_type: {job_type}")
+
     def save_print_job(self, job: PrintJob):
-        """Persist job to database"""
+        """Persist job to database (merge, since the job is detached)."""
         with get_session() as session:
-            session.add(job)
+            session.merge(job)
 
     def clean_obsolete_print_jobs(self):
         with get_session() as session:
@@ -243,8 +316,8 @@ class PrintService:
                 log.info(
                     f"Delete obsolete job because of age as configured in `DELETE_OLD_JOBS_AFTER_DAYS`. Job details: {job}"
                 )
-                job_file = job.get_png_file_path()
-                if os.path.exists(job_file):
+                job_file = job.get_input_file_path()
+                if job_file is not None and os.path.exists(job_file):
                     os.remove(job_file)
                 session.delete(job)
             session.commit()

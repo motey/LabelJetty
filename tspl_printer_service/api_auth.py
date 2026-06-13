@@ -39,3 +39,20 @@ async def verify_token(
             detail="Invalid access token",
         )
     return True
+
+
+async def require_access(
+    authorized: Annotated[bool, Depends(verify_token)],
+) -> bool:
+    """Central authorization seam for **every** endpoint (API and web UI).
+
+    Today this simply delegates to the single optional bearer-token check
+    (:func:`verify_token`). It exists as the one place where the planned
+    multi-mode auth (``AUTH_MODE`` = open / token / login, multi-token,
+    env-configured users with hashed passwords, and session cookies) will be
+    implemented in a dedicated follow-up session — so adding it then will not
+    touch any route signatures.
+
+    TODO(auth): implement open / multi-token / login-session resolution here.
+    """
+    return authorized

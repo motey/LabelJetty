@@ -1,0 +1,42 @@
+<div class="status-grid">
+  <div class="status-card">
+    <div class="k">Print worker</div>
+    <div class="v">
+      {% if worker.status == "running" %}
+        <span style="color:var(--ok)">running</span>
+      {% else %}
+        <span style="color:var(--err)">{{ worker.status }}</span>
+      {% endif %}
+    </div>
+    {% if worker.worker_error %}<div class="hint">{{ worker.worker_error }}</div>{% endif %}
+  </div>
+
+  <div class="status-card">
+    <div class="k">Printer</div>
+    <div class="v">
+      {% if not printer_reachable %}
+        <span style="color:var(--err)">unreachable</span>
+      {% elif not printer_supported %}
+        <span style="color:var(--ok)">ready</span>
+      {% elif printer_status and printer_status.ready and not printer_status.error %}
+        <span style="color:var(--ok)">ready</span>
+      {% else %}
+        <span style="color:var(--warn)">attention</span>
+      {% endif %}
+    </div>
+    {% if not printer_reachable %}
+      <div class="hint">{{ printer_error }}</div>
+    {% elif not printer_supported %}
+      <div class="hint">status not reported by this printer (printing still works)</div>
+    {% elif printer_status %}
+      <div class="hint">
+        {% if printer_status.head_opened %}head open · {% endif %}
+        {% if printer_status.paper_empty %}paper out · {% endif %}
+        {% if printer_status.ribbon_empty %}ribbon out · {% endif %}
+        {% if printer_status.paper_jam %}jam · {% endif %}
+        {% if printer_status.paused %}paused · {% endif %}
+        {% if printer_status.ready and not printer_status.error %}ok{% endif %}
+      </div>
+    {% endif %}
+  </div>
+</div>
