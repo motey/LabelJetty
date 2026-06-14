@@ -201,7 +201,7 @@ class Config(BaseSettings):
         json_schema_extra=_ui("Homebox", label="Entity URL template"),
     )
     HOMEBOX_LABEL_MARGIN_MM: float = Field(
-        default=1.0,
+        default=0.0,
         ge=0.0,
         json_schema_extra=_ui("Homebox", label="Safety border (mm)"),
         description=(
@@ -209,7 +209,8 @@ class Config(BaseSettings):
             "label. Homebox renders its own label edge-to-edge (sized by the "
             "server-side HBOX_LABEL_MAKER_* settings, which we cannot override per "
             "request), so we inset its image to keep content off the label edge. "
-            "Set 0 to print exactly what Homebox returns."
+            "Defaults to 0 (print exactly what Homebox returns); raise it if your "
+            "Homebox label content sits too close to the edge."
         ),
     )
     HOMEBOX_LABEL_SERVICE_AUTOPRINT: bool = Field(
