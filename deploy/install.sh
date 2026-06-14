@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+#
+# LabelJetty installer — turn a ready-to-use Raspberry Pi (or any Debian-based Linux box)
+# into a running LabelJetty in one shot. Idempotent: safe to re-run to update.
+#
+#   curl -fsSL https://raw.githubusercontent.com/motey/LabelJetty/main/deploy/install.sh | bash
+#
+# It will:
+#   1. Install Docker + the compose plugin (if missing) and start it.
+#   2. Add you to the `docker` and `plugdev` groups.
+#   3. Install a udev rule so the USB printer is reachable.
+#   4. Write a docker-compose.yml under ~/labeljetty (override with LABELJETTY_DIR).
+#   5. Pull the image and bring the stack up.
+#   6. Print how to reach the UI and what to configure next.
+#
+# Tunables (export before running, or prefix the curl|bash line):
+#   LABELJETTY_DIR   install/compose directory      (default: $HOME/labeljetty)
+#   PRINTER_USB      printer selector               (default: vid:2d37:pid:62de — Vretti 420B)
+#   LABEL_WIDTH_MM / LABEL_HEIGHT_MM / LABEL_DPI     (default: 57 / 32 / 203)
+#
+# "Any Debian-based system" is best-effort — tested target is Raspberry Pi OS (64-bit).
+# Your mileage may vary elsewhere; the script tells you what it's doing so you can adapt.
+set -euo pipefail
+
+# ---- pretty logging (degrades gracefully when not a TTY) --------------------------------
+if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; N=$'\033[0m'; else B= G= Y= R= N=; fi
+info() { printf '%s==>%s %s\n' "$G$B" "$N" "$*"; }
+warn() { printf '%s!! %s%s\n'  "$Y"   "$*" "$N"; }
+die()  { printf '%sxx %s%s\n'  "$R"   "$*" "$N" >&2; exit 1; }
+
+# ---- privilege + target user ------------------------------------------------------------
+if [ "$(id -u)" -eq 0 ]; then SUDO=""; else
+  command -v sudo >/dev/null 2>&1 || die "Need root or sudo to install packages."
+  SUDO="sudo"
+fi
+# Resolve the *real* login user even when invoked via `sudo bash` / `curl | sudo bash`.
+if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+  TARGET_USER="$SUDO_USER"
+else
+  TARGET_USER="$(id -un)"
+fi
+TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+[ -n "$TARGET_HOME" ] || die "Could not determine home directory for '$TARGET_USER'."
+
+# ---- config -----------------------------------------------------------------------------
+LABELJETTY_DIR="${LABELJETTY_DIR:-$TARGET_HOME/labeljetty}"
+PRINTER_USB="${PRINTER_USB:-vid:2d37:pid:62de}"
+LABEL_WIDTH_MM="${LABEL_WIDTH_MM:-57}"
+LABEL_HEIGHT_MM="${LABEL_HEIGHT_MM:-32}"
+LABEL_DPI="${LABEL_DPI:-203}"
+
+info "LabelJetty installer"
+echo "    user:      $TARGET_USER"
+echo "    directory: $LABELJETTY_DIR"
+echo "    printer:   $PRINTER_USB"
+
+# ---- 0. sanity checks -------------------------------------------------------------------
+command -v apt-get >/dev/null 2>&1 || warn "Not a Debian/apt system — continuing best-effort (YMMV)."
+case "$(uname -m)" in
+  x86_64|aarch64|arm64) : ;;
+  armv7l|armv6l) die "32-bit OS detected ($(uname -m)). LabelJetty's image is amd64/arm64 only — reflash a 64-bit OS." ;;
+  *) warn "Unrecognised architecture $(uname -m); the image may not have a matching variant." ;;
+esac
+
+# ---- 1. Docker --------------------------------------------------------------------------
+if command -v docker >/dev/null 2>&1; then
+  info "Docker already installed ($(docker --version))."
+else
+  info "Installing Docker via get.docker.com ..."
+  curl -fsSL https://get.docker.com | $SUDO sh
+fi
+$SUDO systemctl enable --now docker >/dev/null 2>&1 || true
+
+if ! docker compose version >/dev/null 2>&1 && ! $SUDO docker compose version >/dev/null 2>&1; then
+  warn "Docker Compose v2 plugin not found. Install 'docker-compose-plugin' and re-run."
+fi
+
+# ---- 2. group access --------------------------------------------------------------------
+info "Adding '$TARGET_USER' to docker + plugdev groups (takes effect on next login)."
+$SUDO usermod -aG docker,plugdev "$TARGET_USER" || warn "Could not modify groups for $TARGET_USER."
+
+# ---- 3. udev rule -----------------------------------------------------------------------
+info "Installing udev rule for raw USB printer access."
+$SUDO tee /etc/udev/rules.d/99-tspl-printer.rules >/dev/null <<'EOF'
+# TSPL label printer — allow the plugdev group to access it over raw USB.
+# Reference Vretti/Poskey 420B is 2d37:62de; adjust idVendor/idProduct for other printers.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="2d37", ATTRS{idProduct}=="62de", MODE="0660", GROUP="plugdev"
+EOF
+$SUDO udevadm control --reload-rules >/dev/null 2>&1 || true
+$SUDO udevadm trigger >/dev/null 2>&1 || true
+
+# Best-effort printer presence check (informational only).
+if command -v lsusb >/dev/null 2>&1; then
+  if lsusb | grep -qiE '2d37:62de'; then
+    info "Detected the reference printer (2d37:62de) on USB."
+  elif lsusb | grep -qiE '2d37:'; then
+    warn "A Poskey-class device (vendor 2d37) is present but not 62de — check PRINTER_USB."
+  else
+    warn "No 2d37:* printer seen on USB. Plug it in & power it on, or set PRINTER_USB (run 'lsusb')."
+  fi
+fi
+
+# ---- 4. compose project -----------------------------------------------------------------
+info "Setting up compose project in $LABELJETTY_DIR"
+mkdir -p "$LABELJETTY_DIR/data"
+COMPOSE_FILE="$LABELJETTY_DIR/docker-compose.yml"
+if [ -f "$COMPOSE_FILE" ]; then
+  warn "Existing $COMPOSE_FILE kept (your settings are preserved). Delete it to regenerate."
+else
+  cat > "$COMPOSE_FILE" <<EOF
+# Generated by deploy/install.sh — edit freely, then re-run 'docker compose up -d' to apply.
+services:
+  labeljetty:
+    image: motey/labeljetty:latest
+    container_name: labeljetty
+    restart: unless-stopped
+    ports:
+      - "8888:8888"
+    devices:
+      - /dev/bus/usb:/dev/bus/usb      # the printer's USB bus
+    environment:
+      PRINTER_USB: ${PRINTER_USB}
+      DEFAULT_LABEL_WIDTH_MM: "${LABEL_WIDTH_MM}"
+      DEFAULT_LABEL_HEIGHT_MM: "${LABEL_HEIGHT_MM}"
+      DEFAULT_DPI: "${LABEL_DPI}"
+      # No auth by default. Turn on before exposing beyond a trusted LAN:
+      # AUTH_MODE: protected
+      # AUTH_TOKENS: '[{"name":"ci","token":"choose-a-long-random-secret"}]'
+      # SESSION_SECRET: another-long-random-string
+      # Optional Homebox integration:
+      # HOMEBOX_URL: https://box.example.com
+      # HOMEBOX_API_KEY: hb_xxxxxxxxxxxx
+    volumes:
+      - ./data:/data
+EOF
+  info "Wrote $COMPOSE_FILE"
+fi
+# Make sure the project belongs to the login user (matters if we ran via sudo).
+$SUDO chown -R "$TARGET_USER" "$LABELJETTY_DIR" 2>/dev/null || true
+
+# ---- 5. bring it up ---------------------------------------------------------------------
+# Group membership isn't active in this shell yet, so use sudo for docker this run only.
+if docker info >/dev/null 2>&1; then DC="docker"; else DC="$SUDO docker"; fi
+info "Pulling image and starting LabelJetty ..."
+( cd "$LABELJETTY_DIR" && $DC compose pull && $DC compose up -d )
+
+# ---- 6. report --------------------------------------------------------------------------
+IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+HOST="$(hostname)"
+echo
+info "LabelJetty is up. Open the web UI:"
+[ -n "$IP" ] && echo "    http://${IP}:8888/"
+echo "    http://${HOST}.local:8888/   (if mDNS/Avahi is available)"
+echo
+info "Recommended next steps:"
+cat <<EOF
+  • Print the alignment test to confirm hardware + geometry:
+        cd "$LABELJETTY_DIR" && docker compose exec labeljetty labeljetty-testbench pattern
+  • Match your label stock: edit DEFAULT_LABEL_WIDTH_MM / HEIGHT_MM / DPI in
+        $COMPOSE_FILE
+    then  (cd "$LABELJETTY_DIR" && docker compose up -d)   to apply.
+  • Wrong/again "no printer"? set PRINTER_USB in the compose file ('lsusb' to find vid:pid).
+  • Exposing it beyond a trusted LAN? enable AUTH_MODE=protected (see the compose comments
+    and docs: advanced-usage.md#authentication).
+  • Homebox user? set HOMEBOX_URL + HOMEBOX_API_KEY to print inventory labels.
+EOF
+echo
+warn "You were added to the 'docker' group — log out and back in (or 'newgrp docker') to run"
+warn "docker without sudo. The service itself is already running and survives reboots."

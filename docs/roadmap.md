@@ -25,6 +25,13 @@ as a third provider** alongside API tokens and local users - reusing the same se
 route changes. The plan is to add `AUTH_OIDC_*` settings and an OIDC callback so the service can
 sit behind an identity provider for single sign-on.
 
+### Config via UI
+
+At the moment we need to configure the app userwide via env vars.
+We could have settings per user or global forced setting via admin from a ui setting menu that overwrite Env vars.
+This way the - experimental - prepared raspberry pi image would make more sense
+
+
 ## Possible / under consideration
 
 These are ideas, not commitments (carried over from [Design → Non-goals](design.md#non-goals)):

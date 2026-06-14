@@ -34,49 +34,32 @@ PDFs, text, markdown, barcodes and QR codes, plus an optional, self-contained
 - **Dry-run mode** + a **[CLI test bench](docs/developing.md#real-world-print-tests-with-the-testbench)**
   for hardware-free development and on-device geometry checks.
 
-## 🚀 Run it (Docker)
+## 🚀 Install
 
-Published as [`motey/labeljetty`](https://hub.docker.com/r/motey/labeljetty). For a real deployment
-use **Docker Compose** - a ready-made [`docker-compose.yml`](docker-compose.yml) is in this repo:
-
-```yaml
-services:
-  labeljetty:
-    image: motey/labeljetty:latest
-    restart: unless-stopped
-    ports:
-      - "8888:8888"
-    devices:
-      - /dev/bus/usb:/dev/bus/usb      # the printer's USB bus
-    environment:
-      PRINTER_USB: vid:2d37:pid:62de   # only required setting; find yours with `lsusb`
-    volumes:
-      - ./data:/data                   # persists the job DB + stored images
-```
+**Recommended:** on a Raspberry Pi (or any Debian-based Linux box), one line installs Docker,
+the USB udev rule, and LabelJetty, then prints how to reach the UI:
 
 ```sh
-docker compose up -d   # then open http://localhost:8888/
+curl -fsSL https://raw.githubusercontent.com/motey/LabelJetty/main/deploy/install.sh | bash
 ```
 
-`PRINTER_USB` is the only required setting (the `vid:...:pid:...` form survives replugging). The
-host also needs a **udev rule** so the container can reach the USB device. The committed compose
-file has commented blocks for label geometry,
-[auth](docs/advanced-usage.md#authentication), and [Homebox](docs/advanced-usage.md#homebox-integration).
-
-> **New here? Start with the [Setup guide](docs/setup.md)** - it walks you from picking a
-> printer through the udev rule to your first printed label.
-
-<details>
-<summary><b>Just testing?</b> A one-off <code>docker run</code> (no compose file)</summary>
+The script ([`deploy/install.sh`](deploy/install.sh)) is **idempotent** - safe to re-run to update.
+Prefer to read before piping to a shell? Download and inspect it first:
 
 ```sh
-docker run --rm -p 8888:8888 --device=/dev/bus/usb \
-  -e PRINTER_USB=vid:2d37:pid:62de -v "$(pwd)/data:/data" \
-  motey/labeljetty:latest
+curl -fsSL https://raw.githubusercontent.com/motey/LabelJetty/main/deploy/install.sh -o install.sh
+less install.sh && bash install.sh
 ```
-</details>
 
-Image tags (`latest` / `beta` / `X.Y.Z` / `dev`) and architectures are in
+It targets the reference Vretti 420B by default; override with `PRINTER_USB=...`,
+`LABELJETTY_DIR=...`, or `LABEL_WIDTH_MM/HEIGHT_MM/DPI` (find your id with `lsusb`).
+
+> **New here, or want to do it by hand?** The **[Setup guide](docs/setup.md)** walks through the
+> Docker Compose deployment step by step - picking a printer, the udev rule, the
+> [`docker-compose.yml`](docker-compose.yml), and your first label - which is exactly what the
+> installer automates.
+
+Image tags (`latest` / `beta` / `X.Y.Z` / `dev`) and architectures (incl. 64-bit Pi 3/4/5) are in
 [Advanced usage → Docker](docs/advanced-usage.md#docker-tags--architectures); running **without
 Docker** (PyPI / source) is in [Advanced usage](docs/advanced-usage.md).
 

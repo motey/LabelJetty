@@ -3,6 +3,16 @@
 Going from nothing to a printing label, in order. The classic setup is a Raspberry Pi
 next to the printer, but any Linux host with a USB port works.
 
+> **In a hurry?** On a Raspberry Pi or any Debian-based box, the one-line installer does
+> steps 2-5 for you (Docker, the udev rule, the compose stack):
+>
+> ```sh
+> curl -fsSL https://raw.githubusercontent.com/motey/LabelJetty/main/deploy/install.sh | bash
+> ```
+>
+> This guide is the **manual / explicit** version of that - read on if you want to understand
+> each piece or run it by hand.
+
 1. [Get a printer](#1-get-a-printer)
 2. [Prepare the host](#2-prepare-the-host)
 3. [Find your printer](#3-find-your-printer)

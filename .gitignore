@@ -212,3 +212,4 @@ __marimo__/
 printjobs.sqlite
 *.sqlite
 /images/
+deploy/rpi/boot/custom.toml
