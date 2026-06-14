@@ -165,6 +165,7 @@ ${PRINTER_USB_LINE}
       # Optional Homebox integration:
       # HOMEBOX_URL: https://box.example.com
       # HOMEBOX_API_KEY: hb_xxxxxxxxxxxx
+      # SETTINGS_UI_ENABLED: true
     volumes:
       - ./data:/data
 EOF

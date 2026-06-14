@@ -15,6 +15,11 @@
 
 * { box-sizing: border-box; }
 
+/* Links: the browser default (dark blue) is unreadable on the dark background. */
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+a:visited { color: var(--accent); }
+
 body {
   margin: 0;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
@@ -163,3 +168,31 @@ table.jobs th { color: var(--muted); font-weight: 500; }
 /* Login form */
 .login-panel { max-width: 360px; margin: 2rem auto; }
 .login-panel .error { color: var(--err); margin: 0 0 0.8rem; font-size: 0.9rem; }
+
+/* Settings */
+.user-nav .settings-link { color: var(--accent); text-decoration: none; }
+.banner { padding: 0.6rem 0.8rem; border-radius: var(--radius); margin: 0 0 0.9rem;
+          font-size: 0.88rem; border: 1px solid var(--border); }
+.banner-warn { color: var(--warn); border-color: var(--warn); }
+.banner-ok { color: var(--ok); border-color: var(--ok); }
+.banner-err { color: var(--err); border-color: var(--err); }
+.panel h3 { margin: 1.2rem 0 0.4rem; font-size: 0.95rem; color: var(--muted);
+            border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+.panel textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.group-note { margin: -0.2rem 0 0.6rem; }
+
+/* Label-profiles row editor */
+table.profiles { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+table.profiles th { text-align: left; color: var(--muted); font-weight: 500;
+                    padding: 0.2rem 0.4rem; }
+table.profiles td { padding: 0.15rem 0.4rem; }
+table.profiles input { width: 100%; }
+table.profiles input[name="lp_width"], table.profiles input[name="lp_height"],
+table.profiles input[name="lp_dpi"] { max-width: 7rem; }
+.row-del { background: transparent; border: 1px solid var(--border); color: var(--muted);
+           border-radius: 6px; padding: 0.2rem 0.5rem; cursor: pointer; }
+.row-del:hover { color: var(--err); border-color: var(--err); }
+.add-row { margin-top: 0.5rem; background: var(--panel-2); border: 1px solid var(--border);
+           color: var(--text); border-radius: var(--radius); padding: 0.35rem 0.7rem; cursor: pointer; }
+.add-row:hover { border-color: var(--accent); }
+.printer-custom { margin-top: 0.4rem; }

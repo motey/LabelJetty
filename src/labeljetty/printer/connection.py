@@ -173,6 +173,40 @@ class TSPLPrinterConnectionUSB:
             "known_vendor": KNOWN_TSPL_VENDORS.get(dev.idVendor),
         }
 
+    @classmethod
+    def list_usb_devices(cls) -> List[dict]:
+        """Enumerate *all* connected USB devices for the settings picker, flagging
+        the ones that look like a TSPL printer (``is_candidate``). Pure descriptor
+        reads — nothing is claimed. Never raises: returns ``[]`` if libusb is
+        unavailable. Candidates are listed first; duplicate ``vid:pid`` selectors
+        are collapsed (the selector can't distinguish two identical models anyway).
+        """
+        try:
+            found = usb.core.find(find_all=True)
+        except Exception:
+            return []
+        if found is None:
+            return []
+        out: List[dict] = []
+        seen: set[str] = set()
+        for dev in found:
+            try:
+                selector = cls.selector_for(dev)
+                if selector in seen:
+                    continue
+                seen.add(selector)
+                out.append(
+                    {
+                        "selector": selector,
+                        "description": cls.describe(dev),
+                        "is_candidate": cls._matches(dev),
+                    }
+                )
+            except Exception:
+                continue
+        out.sort(key=lambda d: (not d["is_candidate"], d["description"].lower()))
+        return out
+
     # -------------------------
     # --- Lookup: VID / PID ---
     # -------------------------

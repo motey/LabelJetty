@@ -10,26 +10,40 @@ auth seam as the API.
 from __future__ import annotations
 
 import base64
+import json
 import tempfile
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Union, get_args, get_origin, Literal
 
-from fastapi import APIRouter, Depends, Form, Request, UploadFile, File
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, File
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import ValidationError
 from sqlmodel import select
 
 from labeljetty.web.auth import require_access, current_principal, verify_password
+from labeljetty.web.password import hash_password
 from labeljetty.web.api import _enqueue, _store_upload, _job_response
-from labeljetty.config import Config
-from labeljetty.core.db import PrintJob, get_session
+from labeljetty.config import (
+    Config,
+    get_config,
+    reload_config,
+    ui_field_meta,
+)
+from labeljetty.core.db import (
+    PrintJob,
+    get_session,
+    set_setting_overrides,
+    clear_setting_overrides,
+)
 from labeljetty.printer import JobType
 from labeljetty.printer.render import render_label_png_bytes
 from labeljetty.service.worker import PrintServiceManager
 from labeljetty.core.logging import get_logger
 from labeljetty.version import get_version
 
-config = Config()
+config = get_config()
 log = get_logger()
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -52,6 +66,7 @@ def _base_context(request: Request) -> dict:
         "default_dpi": config.DEFAULT_DPI,
         "homebox_enabled": config.homebox_configured(),
         "auth_enabled": config.auth_enabled(),
+        "settings_ui_enabled": config.SETTINGS_UI_ENABLED,
         "principal": current_principal(request),
         "version": get_version(),
     }
@@ -527,4 +542,312 @@ async def ui_status(
             "printer_info": printer_info,
             "autodetected": not config.PRINTER_USB,
         },
+    )
+
+
+# --------------------------------------------------------------------------- #
+#  Settings (admin config page — generic form built from Config.model_fields)
+# --------------------------------------------------------------------------- #
+# Read-only fields shown for context (infra tier — not editable from the web).
+_SYSTEM_INFO_FIELDS = [
+    ("Listening host", "SERVER_LISTENING_HOST"),
+    ("Listening port", "SERVER_LISTENING_PORT"),
+    ("Database path", "SQLITE_PATH"),
+    ("Image storage", "IMAGE_STORAGE_DIRECTORY"),
+    ("Auth mode", "AUTH_MODE"),
+]
+# Render groups in a stable, sensible order; unknown groups fall to the end.
+_GROUP_ORDER = [
+    "Label defaults",
+    "Printer",
+    "Authentication",
+    "Homebox",
+    "Maintenance",
+    "System",
+]
+
+
+def _usb_candidates() -> list[dict]:
+    """All connected USB devices (printer-like ones flagged) for the picker, or
+    [] if USB can't be enumerated. Lazy import so the page never hard-depends on
+    libusb being importable."""
+    try:
+        from labeljetty.printer.connection import TSPLPrinterConnectionUSB
+
+        return TSPLPrinterConnectionUSB.list_usb_devices()
+    except Exception as e:  # pragma: no cover - depends on host USB stack
+        log.warning(f"USB device enumeration failed: {e}")
+        return []
+
+
+def _unwrap_optional(annotation):
+    """Return (inner_annotation, is_optional) — strips ``Optional[...]``."""
+    if get_origin(annotation) is Union:
+        args = [a for a in get_args(annotation) if a is not type(None)]
+        if len(args) == 1:
+            return args[0], True
+    return annotation, False
+
+
+def _field_widget(name: str, ui: dict) -> tuple[str, list]:
+    """Pick an input widget for a field: explicit ``ui['widget']`` wins, else infer
+    from the annotation (bool→checkbox, Literal→select, int→number, else text)."""
+    if ui.get("widget"):
+        return ui["widget"], []
+    ann, _ = _unwrap_optional(Config.model_fields[name].annotation)
+    if ann is bool:
+        return "checkbox", []
+    if get_origin(ann) is Literal:
+        return "select", list(get_args(ann))
+    if ann is int:
+        return "number", []
+    return "text", []
+
+
+def _settings_field_views(cfg: Config) -> dict:
+    """Build grouped view-models for the editable fields, in display order."""
+    meta = ui_field_meta()
+    locked = set(cfg.SETTINGS_LOCKED_KEYS)
+    groups: dict[str, list] = {}
+    for name, ui in meta.items():
+        field = Config.model_fields[name]
+        widget, options = _field_widget(name, ui)
+        value = getattr(cfg, name)
+        view = {
+            "name": name,
+            "label": ui.get("label") or name,
+            "help": field.description,
+            "widget": widget,
+            "options": options,
+            "locked": name in locked,
+            "restart": ui.get("restart", False),
+            "checked": bool(value) if widget == "checkbox" else False,
+            "value": "" if value is None else value,
+            "json_text": json.dumps(jsonable_encoder(value), indent=2)
+            if widget in ("json", "label_profiles")
+            else "",
+        }
+        # Read-only string shown when a complex field is locked via env.
+        view["locked_display"] = "" if value is None else str(value)
+        if widget == "label_profiles":
+            # Structured rows for the friendly table editor.
+            view["rows"] = [jsonable_encoder(p) for p in value]
+            view["locked_display"] = view["json_text"]
+        elif widget == "printer_select":
+            candidates = _usb_candidates()
+            current = "" if value is None else str(value)
+            view["candidates"] = candidates
+            # "custom" = a pinned selector not in the picker (serial:/port:/bus:…
+            # or a device that isn't currently plugged in).
+            view["is_custom"] = bool(current) and current not in {
+                c["selector"] for c in candidates
+            }
+        elif widget == "auth_users":
+            # Usernames only — password hashes are never sent to the browser.
+            view["users"] = [{"username": u.username} for u in value]
+            view["locked_display"] = ", ".join(u.username for u in value)
+        groups.setdefault(ui.get("group", "Other"), []).append(view)
+    ordered = {g: groups[g] for g in _GROUP_ORDER if g in groups}
+    for g in groups:  # any group not in the explicit order, appended
+        ordered.setdefault(g, groups[g])
+    return ordered
+
+
+def _group_notes(cfg: Config) -> dict:
+    """Per-group explanatory notes shown under the group heading."""
+    homebox = (
+        "The Homebox API key is a <strong>secret</strong> and is set only via the "
+        "<code>HOMEBOX_API_KEY</code> environment variable — it cannot be edited here. "
+    )
+    homebox += (
+        "It is currently set. ✓"
+        if cfg.HOMEBOX_API_KEY
+        else "It is <strong>not set</strong>, so the Homebox module stays disabled until you set it in the environment. ⚠"
+    )
+
+    auth = (
+        "Add a login user and switch <em>Authentication mode</em> to <code>protected</code> to "
+        "secure the interface — no need to edit env/compose. Passwords are stored hashed; leave a "
+        "user's password blank to keep it unchanged. "
+    )
+    if not cfg.SESSION_SECRET:
+        auth += (
+            "<strong>Note:</strong> <code>SESSION_SECRET</code> is unset, so logins won't survive "
+            "a restart — set it in the environment for stable sessions. "
+        )
+    auth += (
+        "API tokens (<code>AUTH_TOKENS</code>) remain environment-only. Make sure you can log in "
+        "before saving <code>protected</code> — a mismatch would lock out the UI."
+    )
+    return {"Homebox": homebox, "Authentication": auth}
+
+
+def _settings_context(request: Request, **extra) -> dict:
+    cfg = get_config()
+    ctx = _base_context(request)
+    ctx.update(
+        {
+            "groups": _settings_field_views(cfg),
+            "group_notes": _group_notes(cfg),
+            "system_info": [
+                (label, getattr(cfg, attr)) for label, attr in _SYSTEM_INFO_FIELDS
+            ],
+            "open_mode_warning": not cfg.auth_enabled(),
+            "error": None,
+            "saved": False,
+            "restart_pending": False,
+        }
+    )
+    ctx.update(extra)
+    return ctx
+
+
+def _require_settings_ui() -> None:
+    """404 when the settings UI is disabled (default), so it's invisible unless
+    deliberately switched on with SETTINGS_UI_ENABLED."""
+    if not get_config().SETTINGS_UI_ENABLED:
+        raise HTTPException(status_code=404)
+
+
+@ui_router.get("/ui/settings", response_class=HTMLResponse)
+async def ui_settings(
+    request: Request, access: Annotated[bool, Depends(require_access)]
+):
+    _require_settings_ui()
+    return templates.TemplateResponse("settings.html", _settings_context(request))
+
+
+@ui_router.post("/ui/settings", response_class=HTMLResponse)
+async def ui_settings_save(
+    request: Request, access: Annotated[bool, Depends(require_access)]
+):
+    _require_settings_ui()
+    form = await request.form()
+    cfg = get_config()
+    meta = ui_field_meta()
+    locked = set(cfg.SETTINGS_LOCKED_KEYS)
+
+    overrides: dict = {}
+    field_errors: list[str] = []
+    restart_pending = False
+    for name, ui in meta.items():
+        if name in locked:
+            continue
+        field = Config.model_fields[name]
+        widget, _ = _field_widget(name, ui)
+        if ui.get("restart"):
+            restart_pending = True
+        if widget == "checkbox":
+            overrides[name] = name in form
+        elif widget == "label_profiles":
+            # Parallel-array row editor: lp_name[]/lp_width[]/lp_height[]/lp_dpi[].
+            names = form.getlist("lp_name")
+            widths = form.getlist("lp_width")
+            heights = form.getlist("lp_height")
+            dpis = form.getlist("lp_dpi")
+            profiles = []
+            for i, pname in enumerate(names):
+                pname = pname.strip()
+                if not pname:
+                    continue  # blank row → ignore
+                w = (widths[i] if i < len(widths) else "").strip()
+                h = (heights[i] if i < len(heights) else "").strip()
+                d = (dpis[i] if i < len(dpis) else "").strip()
+                if not w or not h:
+                    field_errors.append(f"Label profile '{pname}': width and height are required")
+                    continue
+                row = {"name": pname, "width_mm": w, "height_mm": h}
+                if d:
+                    row["dpi"] = d
+                profiles.append(row)  # ints validated by the model below
+            overrides[name] = profiles
+        elif widget == "printer_select":
+            choice = str(form.get("PRINTER_USB_choice", "")).strip()
+            if choice == "__custom__":
+                choice = str(form.get("PRINTER_USB_custom", "")).strip()
+            overrides[name] = choice or None
+        elif widget == "auth_users":
+            # Row editor: au_username[]/au_password[]. A blank password keeps the
+            # existing user's hash; a new user without a password is an error. Only
+            # password *hashes* are ever stored — plaintext is hashed here and dropped.
+            usernames = form.getlist("au_username")
+            passwords = form.getlist("au_password")
+            users = []
+            for i, uname in enumerate(usernames):
+                uname = uname.strip()
+                if not uname:
+                    continue  # blank row → ignore (also how you remove a user)
+                pw = (passwords[i] if i < len(passwords) else "").strip()
+                if pw:
+                    users.append({"username": uname, "password_hash": hash_password(pw)})
+                else:
+                    existing = cfg.find_user(uname)
+                    if existing is None:
+                        field_errors.append(f"User '{uname}': set a password for a new user")
+                    else:
+                        users.append(
+                            {"username": uname, "password_hash": existing.password_hash}
+                        )
+            overrides[name] = users
+        elif widget == "json":
+            raw = str(form.get(name, "")).strip()
+            try:
+                overrides[name] = json.loads(raw) if raw else []
+            except json.JSONDecodeError as e:
+                field_errors.append(f"{ui.get('label') or name}: invalid JSON ({e})")
+        elif widget == "number":
+            raw = str(form.get(name, "")).strip()
+            if raw == "":
+                continue  # leave to env/default
+            try:
+                overrides[name] = int(raw)
+            except ValueError:
+                field_errors.append(f"{ui.get('label') or name}: must be a number")
+        else:  # text / select
+            if name not in form:
+                continue
+            raw = str(form.get(name)).strip()
+            _, optional = _unwrap_optional(field.annotation)
+            overrides[name] = None if (optional and raw == "") else raw
+
+    if field_errors:
+        return templates.TemplateResponse(
+            "settings.html",
+            _settings_context(request, error=" • ".join(field_errors)),
+            status_code=400,
+        )
+
+    # Validate the whole config with the overlay applied — reuses model validators
+    # (e.g. the auth lock-out guard) so a bad edit is rejected, not persisted.
+    try:
+        Config(**overrides)
+    except ValidationError as e:
+        msg = "; ".join(
+            f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}" for err in e.errors()
+        )
+        return templates.TemplateResponse(
+            "settings.html",
+            _settings_context(request, error=msg),
+            status_code=400,
+        )
+
+    set_setting_overrides({k: json.dumps(jsonable_encoder(v)) for k, v in overrides.items()})
+    reload_config()
+    log.info(f"Settings updated via UI: {sorted(overrides)}")
+    return templates.TemplateResponse(
+        "settings.html",
+        _settings_context(request, saved=True, restart_pending=restart_pending),
+    )
+
+
+@ui_router.post("/ui/settings/reset", response_class=HTMLResponse)
+async def ui_settings_reset(
+    request: Request, access: Annotated[bool, Depends(require_access)]
+):
+    _require_settings_ui()
+    clear_setting_overrides()
+    reload_config()
+    log.info("Settings overrides cleared via UI — reverted to env/defaults")
+    return templates.TemplateResponse(
+        "settings.html", _settings_context(request, saved=True)
     )

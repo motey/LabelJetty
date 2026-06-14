@@ -20,9 +20,9 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-from labeljetty.config import Config
+from labeljetty.config import Config, get_config
 
-config = Config()
+config = get_config()
 
 
 class HomeboxEntity(BaseModel):

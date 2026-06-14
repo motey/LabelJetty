@@ -27,12 +27,12 @@ from typing import Annotated, Literal, Optional, Protocol
 
 from fastapi import Depends, HTTPException, Request, status
 
-from labeljetty.config import Config
+from labeljetty.config import Config, get_config
 from labeljetty.core.logging import get_logger
 from labeljetty.web.password import verify_password
 
 
-config = Config()
+config = get_config()
 log = get_logger()
 
 PrincipalKind = Literal["anonymous", "token", "user", "oidc"]

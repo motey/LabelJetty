@@ -1,16 +1,16 @@
 from typing import Optional, Literal, Dict, Generator, Any
 from datetime import datetime
-from sqlmodel import SQLModel, Field, Column, Session, create_engine
+from sqlmodel import SQLModel, Field, Column, Session, create_engine, select
 from sqlalchemy import String
 from contextlib import contextmanager
 from labeljetty.core.sqltypes import SqlJsonText
-from labeljetty.config import Config
+from labeljetty.config import Config, get_config
 import uuid
 from pathlib import Path
 from pydantic import field_serializer, field_validator
 from labeljetty.printer import JobType, TSPLPrinterStatusMessage
 
-config = Config()
+config = get_config()
 # Database URL - configure as needed
 DATABASE_URL = f"sqlite:///{config.SQLITE_PATH}"
 
@@ -80,6 +80,18 @@ class PrintJob(SQLModel, table=True):
         return value
 
 
+class SettingOverride(SQLModel, table=True):
+    """One admin-edited config override (key → JSON value), applied on top of env.
+
+    Written by the settings UI and read back by ``config.build_config()`` (which
+    uses stdlib sqlite3 to avoid importing this module). The table name SQLModel
+    derives — ``settingoverride`` — is referenced there as ``_OVERLAY_TABLE``."""
+
+    key: str = Field(primary_key=True, description="Config field name, e.g. DEFAULT_DPI")
+    json_value: str = Field(description="json.dumps() of the override value")
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
 class WorkerStatus(SQLModel, table=True):
     id: Optional[int] = Field(
         default=1, primary_key=True, description="dummy pk field. Will always be one"
@@ -119,3 +131,37 @@ def get_session() -> Generator[Session, None, None]:
 def get_db_url() -> str:
     """Get database URL"""
     return DATABASE_URL
+
+
+# --------------------------------------------------------------------------- #
+#  Settings overrides (admin config edited via the web UI)
+# --------------------------------------------------------------------------- #
+def get_setting_overrides() -> Dict[str, str]:
+    """All stored overrides as ``{key: json_value}`` (raw JSON strings)."""
+    with get_session() as session:
+        rows = session.exec(select(SettingOverride)).all()
+        return {row.key: row.json_value for row in rows}
+
+
+def set_setting_overrides(values: Dict[str, str]) -> None:
+    """Replace the override set with ``values`` (``{key: json_value}``). Keys not
+    present are deleted, so this mirrors exactly what the settings form submitted."""
+    with get_session() as session:
+        existing = {row.key: row for row in session.exec(select(SettingOverride)).all()}
+        for key, json_value in values.items():
+            row = existing.pop(key, None)
+            if row is None:
+                session.add(SettingOverride(key=key, json_value=json_value))
+            else:
+                row.json_value = json_value
+                row.updated_at = datetime.now()
+                session.add(row)
+        for stale in existing.values():  # keys no longer submitted → clear override
+            session.delete(stale)
+
+
+def clear_setting_overrides() -> None:
+    """Remove every override (revert to env/defaults)."""
+    with get_session() as session:
+        for row in session.exec(select(SettingOverride)).all():
+            session.delete(row)

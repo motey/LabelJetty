@@ -5,9 +5,9 @@ import hashlib
 from typing import Optional, Dict, Tuple
 import inspect
 from pathlib import Path
-from labeljetty.config import Config
+from labeljetty.config import Config, get_config
 
-config = Config()
+config = get_config()
 
 
 APP_LOGGER_DEFAULT_NAME = config.APP_NAME

@@ -93,6 +93,12 @@ There are two modes, selected by `AUTH_MODE`:
 
 ### Protected setup
 
+> **From the browser (no env editing).** If you enable the [settings page](configuration.md#settings-via-the-web-ui)
+> (`SETTINGS_UI_ENABLED=true`), you can add login users and switch *Authentication mode* to
+> `protected` directly under **Settings → Authentication** — passwords are hashed for you, so the
+> `labeljetty-hash-password` step below isn't needed. API tokens and `SESSION_SECRET` still come
+> from the environment. The rest of this section is the equivalent env-var setup.
+
 Generate a password hash for a login user (never store plaintext):
 
 ```sh
@@ -138,6 +144,10 @@ Open `http://<host>:<port>/` for the mobile-first UI. It covers everything the A
   retyping 57×32 mm.
 - **Live preview** - render the label bitmap and see it before you print, saving wasted stock.
 - **Live status** - the job queue and the printer/worker status poll and update in place.
+- **Settings page** (optional, `SETTINGS_UI_ENABLED=true`) - edit the operational settings at
+  runtime without touching env/compose: label defaults and profiles (a row editor, no JSON), a
+  USB printer picker, the Homebox connection, retention, log level, and login users / auth mode.
+  See [Settings via the web UI](configuration.md#settings-via-the-web-ui).
 
 ## The REST API
 

@@ -57,7 +57,7 @@ This maps onto the package layout under [`src/labeljetty/`](../src/labeljetty):
 | [`service/`](../src/labeljetty/service) | service | the background worker that owns the printer and processes jobs. |
 | [`integrations/`](../src/labeljetty/integrations) | integration | the Homebox client. |
 | [`web/`](../src/labeljetty/web) | interface | FastAPI app, REST API, web UI (Jinja2 + HTMX), auth. |
-| [`config.py`](../src/labeljetty/config.py) | - | one `Config` (pydantic-settings) read from `.env` / env vars; sits at the package root on purpose - the first thing people look for. |
+| [`config.py`](../src/labeljetty/config.py) | - | one `Config` (pydantic-settings) read from `.env` / env vars, with an optional DB overlay edited via the [settings UI](configuration.md#settings-via-the-web-ui) layered on top (DB > env > default); sits at the package root on purpose - the first thing people look for. |
 
 ## The layers
 
@@ -141,8 +141,11 @@ claims) rather than a bare boolean. Two providers ship today and can be active a
 
 Returning a `Principal` and centralising the check makes the layer **OIDC-ready**: OIDC slots in
 as a third provider reusing the same session, with no route changes. Browsers (Accept:
-text/html) get a `303 → /login`; API clients get `401`. Startup fails fast if `protected` is set
-with no providers, so you can't lock yourself out.
+text/html) get a `303 → /login`; API clients get `401`. The lock-out guard (`protected` with no
+providers is rejected) runs as a model validator, so it protects edits from the
+[settings UI](configuration.md#settings-via-the-web-ui) — where login users and `AUTH_MODE` can be
+managed — exactly as it does at startup. `require_access` rebuilds the providers from the live
+config per request, so such changes take effect without a restart.
 
 See [Advanced usage → Authentication](advanced-usage.md#authentication) for configuration.
 

@@ -10,6 +10,7 @@ Compose `environment:` block, pass `-e KEY=value`, or mount a file with `--env-f
 - [What you must / should set](#what-you-must--should-set)
 - [`PRINTER_USB` selector forms](#printer_usb-selector-forms)
 - [Full reference](#full-reference)
+- [Settings via the web UI](#settings-via-the-web-ui)
 - [Status reading is optional](#status-reading-is-optional)
 
 ## What you must / should set
@@ -76,6 +77,8 @@ PRINTER_USB=vid:2d37:pid:62de
 | `HOMEBOX_API_PREFIX` | `/api/v1` | API path prefix on the Homebox server |
 | `HOMEBOX_ENTITY_URL_TEMPLATE` | `/item/{id}` | Web path an entity opens at (for the "open in Homebox" link) |
 | `HOMEBOX_LABEL_SERVICE_AUTOPRINT` | `true` | Also enqueue the print when Homebox calls our label-service endpoint |
+| `SETTINGS_UI_ENABLED` | `false` | Enable the in-app settings page (`/ui/settings`) to edit the operational settings below at runtime. See [Settings via the web UI](#settings-via-the-web-ui). |
+| `SETTINGS_LOCKED_KEYS` | `[]` | JSON list of field names pinned to their env value — shown read-only in the settings page and never taken from the DB, e.g. `["HOMEBOX_URL","LOG_LEVEL"]` |
 | `APP_NAME` | `LabelJetty` | Display name shown in the UI and logs |
 | `LOG_LEVEL` | `DEBUG` | `CRITICAL`/`ERROR`/`WARNING`/`INFO`/`DEBUG` |
 | `LOG_DISABLE_COLORS` | `false` | Disable ANSI colours (useful when logging to a file/journal) |
@@ -86,6 +89,38 @@ PRINTER_USB=vid:2d37:pid:62de
 > paths. The Docker image already sets both to `/data`. A non-standard override,
 > `LABELJETTY_DOT_ENV_FILE`, points at a different `.env` path (used by the test harness to
 > ignore the real one).
+
+## Settings via the web UI
+
+Setting `SETTINGS_UI_ENABLED=true` exposes a **Settings** page at `/ui/settings` (linked
+from the header) that edits the operational settings — label defaults and profiles, the
+printer selector, the Homebox connection, job retention, and log level — **without editing
+env vars or restarting**. This is what makes the prepared Raspberry Pi image practical: ship
+sane env defaults, then adjust from the browser.
+
+- **Precedence:** an edit saved in the UI is stored in the database and **overrides the
+  environment variable** for that setting (UI&nbsp;>&nbsp;env/`.env`&nbsp;>&nbsp;default). The
+  page form is generated automatically from the settings model, so it stays in sync.
+- **What's editable:** an operational allowlist — label defaults/profiles, printer selector,
+  Homebox connection, job retention, log level, plus **authentication mode and login users**
+  (`AUTH_MODE` / `AUTH_USERS`), so you can secure the interface without editing env/compose.
+  Passwords are entered in the form, **hashed server-side**, and only the hash is stored; leave
+  a user's password blank to keep it. Raw secrets (`HOMEBOX_API_KEY`, `SESSION_SECRET`,
+  `AUTH_TOKENS`) and infrastructure (`SQLITE_PATH`, `SERVER_LISTENING_*`) stay env-only — the
+  latter shown read-only under *System info*. A few values (e.g. `LOG_LEVEL`) are marked ↻ and
+  only take effect after a restart.
+
+> **Securing the printer from the UI:** add a login user, switch *Authentication mode* to
+> `protected`, and Save. The lock-out guard refuses `protected` with no users/tokens, so a bad
+> save is rejected rather than locking you out — but make sure your new login works, and set a
+> stable `SESSION_SECRET` (env) so sessions survive restarts.
+- **Pinning:** list field names in `SETTINGS_LOCKED_KEYS` to force them to their env value —
+  they render read-only and ignore any stored override (useful for managed/Pi deployments).
+- **Reverting:** *Reset to env/defaults* clears all stored overrides.
+
+> **Security:** the page is **off by default**. Enabling it in `AUTH_MODE=open` means anyone
+> who can reach the box can change configuration (the page warns you). Pair it with
+> `AUTH_MODE=protected`.
 
 ## Status reading is optional
 

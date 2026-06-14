@@ -14,9 +14,9 @@ from labeljetty.core.db import get_session, PrintJob, WorkerStatus, init_db
 from labeljetty.printer import TSPLPrinter, TSPLPrinterConnectionUSB
 from labeljetty.core.logging import get_logger
 
-from labeljetty.config import Config
+from labeljetty.config import get_config, reload_config
 
-config = Config()
+config = get_config()
 log = get_logger()
 
 
@@ -224,6 +224,12 @@ class PrintService:
         try:
             job.started_at = datetime.now()
             self.save_print_job(job)
+
+            # This worker is a separate process, so settings changed via the web
+            # UI don't reach it through reload_config() there. Refresh from the DB
+            # overlay per job (jobs are human-paced — the extra read is negligible)
+            # so the printer selector and geometry defaults stay current.
+            reload_config()
 
             con = config.get_printer_connection()
             con.connect()

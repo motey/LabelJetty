@@ -21,13 +21,13 @@ from labeljetty.web.api import fast_api_router
 from labeljetty.web.ui import ui_router
 
 from labeljetty.core.logging import get_logger
-from labeljetty.config import Config
+from labeljetty.config import Config, get_config
 from labeljetty.version import get_version
 
 STATIC_DIR = Path(__file__).parent / "static"
 
 log = get_logger()
-config = Config()
+config = get_config()
 
 
 @dataclass

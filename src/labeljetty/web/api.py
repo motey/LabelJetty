@@ -21,11 +21,11 @@ from labeljetty.core.db import get_session, PrintJob
 from labeljetty.printer import JobType, TSPLPrinter, TSPLPrinterStatusMessage
 from labeljetty.printer.render import render_label_png_bytes
 from labeljetty.web.auth import require_access
-from labeljetty.config import Config
+from labeljetty.config import Config, get_config
 from labeljetty.core.logging import get_logger
 from sqlmodel import select
 
-config = Config()
+config = get_config()
 log = get_logger()
 
 

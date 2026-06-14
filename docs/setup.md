@@ -170,6 +170,7 @@ the `DEFAULT_LABEL_*` env vars) to match your stock. More testbench commands are
 
 - **[Configuration](configuration.md)** - every setting, and which to set for your stock.
 - **[Authentication](advanced-usage.md#authentication)** - the default is **no auth**; turn
-  it on before exposing the service beyond a trusted LAN.
+  it on before exposing the service beyond a trusted LAN (via env, or from the
+  [settings page](configuration.md#settings-via-the-web-ui) once enabled).
 - **[Homebox integration](advanced-usage.md#homebox-integration)** - print inventory labels.
 - **[REST API](advanced-usage.md#the-rest-api)** - drive it from scripts and other machines.

@@ -10,10 +10,10 @@ from labeljetty.service.worker import PrintServiceManager
 
 
 def run():
-    from labeljetty.config import Config
+    from labeljetty.config import get_config
     from labeljetty.core.logging import get_logger, get_uvicorn_loglevel
 
-    config = Config()
+    config = get_config()
     log = get_logger()
     log.info(f"LOG_LEVEL: {config.LOG_LEVEL}")
     log.info(f"UVICORN_LOG_LEVEL: {get_uvicorn_loglevel()}")

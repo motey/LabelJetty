@@ -9,6 +9,13 @@ how it all fits together. This page tracks what's planned next.
 
 ## Recently shipped
 
+- **Config via the web UI** - set `SETTINGS_UI_ENABLED=true` for a `/ui/settings` page that
+  edits the operational settings (label defaults/profiles, printer selector, Homebox, job
+  retention, log level) at runtime. Edits are stored in the database and **override env vars**
+  (UI > env > default); secrets and infrastructure stay env-only, and `SETTINGS_LOCKED_KEYS`
+  pins chosen fields read-only. The form is generated from the settings model, so new editable
+  settings are one metadata flag. See [Settings via the web UI](configuration.md#settings-via-the-web-ui).
+
 - **Printer auto-discovery** - leave `PRINTER_USB` unset and LabelJetty auto-detects a
   connected TSPL printer (matching known vendor ids and USB printer-class devices). It uses
   the printer when exactly one is found, and lists candidates as copy-paste selectors when
@@ -25,11 +32,21 @@ as a third provider** alongside API tokens and local users - reusing the same se
 route changes. The plan is to add `AUTH_OIDC_*` settings and an OIDC callback so the service can
 sit behind an identity provider for single sign-on.
 
-### Config via UI
+### Config via UI — follow-ups
 
-At the moment we need to configure the app userwide via env vars.
-We could have settings per user or global forced setting via admin from a ui setting menu that overwrite Env vars.
-This way the - experimental - prepared raspberry pi image would make more sense
+The operational settings page shipped (see [Recently shipped](#recently-shipped)). Still open:
+
+- **Secrets in the UI** (masked, write-only): `HOMEBOX_API_KEY` and friends, so a Pi image can
+  be fully provisioned from the browser. The field metadata already carries a `secret` flag.
+- **A role model** (`admin` users) so the page can be exposed safely in `open` mode and offer
+  true per-admin vs per-user hierarchy — today it's gated only by `SETTINGS_UI_ENABLED` + auth.
+- **API tokens in the UI** (`AUTH_TOKENS`) — login users and `AUTH_MODE` are now editable from
+  the settings page (passwords hashed server-side, anti-lockout guard enforced); machine tokens
+  and `SESSION_SECRET` stay env-only for now.
+
+### Increase gama for images
+
+On my printer any images are very dark. Lets have a gamme slider for image printing to make images brighter
 
 
 ## Possible / under consideration
@@ -43,6 +60,8 @@ These are ideas, not commitments (carried over from [Design → Non-goals](desig
 - **Multi-printer support** - the architecture currently assumes a single printer.
 - **Broader hardware coverage** - verified support for printers other than the reference Vretti
   420B. This grows from user reports; see [Hardware](hardware.md) and please share your results.
+- **Batch printing**: some kind of simple template designer and print batches of labels given sequential numbers or a csv list to fill out the template.
+
 
 ## Explicit non-goals
 

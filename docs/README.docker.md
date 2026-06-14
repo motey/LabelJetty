@@ -40,7 +40,9 @@ Then open **http://localhost:8888/**.
   robust form; find yours with `lsusb`. This is the only required setting.
 - **`./data:/data`** persists the SQLite job DB and stored images.
 
-Every setting is an env var. The [Setup guide](https://github.com/motey/LabelJetty/blob/main/docs/setup.md)
+Every setting is an env var (and the operational ones can also be edited at runtime from the
+optional in-app settings page, `SETTINGS_UI_ENABLED=true`). The
+[Setup guide](https://github.com/motey/LabelJetty/blob/main/docs/setup.md)
 walks through the printer, the udev rule, and your first label end to end.
 
 ### Just testing?
