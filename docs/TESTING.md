@@ -147,17 +147,9 @@ manual `testbench.py`.
 ## Manual hardware testing
 
 Real printing is **never** part of the automated suite. To exercise a physical
-printer use the testbench CLI (see the README's *Testing* section):
-
-```bash
-# Emit TSPL to stdout - no printer needed
-uv run labeljetty-testbench --dry-run pattern
-
-# Print on the real device
-uv run labeljetty-testbench pattern
-uv run labeljetty-testbench text "Hello world"
-uv run labeljetty-testbench status
-```
+printer use the testbench CLI, documented in
+[Developing → Real-world print tests](developing.md#real-world-print-tests-with-the-testbench)
+(dry-run, the test pattern, per-type renderers, status/probe).
 
 If you add automated tests that *do* require a real printer, mark them
 `@pytest.mark.hardware`. They are deselected by default (`-m "not hardware"`)

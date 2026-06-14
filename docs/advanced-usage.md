@@ -1,11 +1,10 @@
 # Advanced usage
 
-Everything beyond the Docker quickstart in the [README](../README.md): running without Docker,
-authentication, the REST API, text auto-fit, and Homebox integration. The full environment-variable
-reference and printer setup live in the separate **[Configuration](configuration.md)** doc.
+Everything beyond the [Setup guide](setup.md): running without Docker, authentication, the
+REST API, text auto-fit, and Homebox integration. Printer wiring is in the
+[Setup guide](setup.md) and every setting in **[Configuration](configuration.md)**.
 
 - [Running without Docker](#running-without-docker)
-- [Printer & configuration](#printer--configuration) (see the [Configuration](configuration.md) doc)
 - [Authentication](#authentication)
 - [The web UI](#the-web-ui)
 - [The REST API](#the-rest-api)
@@ -69,31 +68,15 @@ The service starts the REST API, the web UI, and the background print worker on
 > **relative to the current working directory**. Run from the repository root each time, or set
 > absolute paths in `.env`.
 
-## Printer & configuration
-
-Wiring up the printer (finding its USB id, the udev rule, the `PRINTER_USB` selector, and
-verifying with the test pattern) and the **full environment-variable reference** - including which
-settings you must, should, and can optionally set - now live in their own doc:
-
-> **→ [Configuration](configuration.md)** - all variables, [setting up the
-> printer](configuration.md#setting-up-the-printer), and the [status-reading
-> caveat](configuration.md#status-reading-is-optional).
-
-The essentials: copy `sample.env` to `.env`, set `PRINTER_USB` (e.g. `vid:2d37:pid:62de`, found
-via `lsusb`), add the udev rule so a non-root user can reach the USB device, then verify with
-`uv run labeljetty-testbench pattern`. Not sure what to buy? See [Hardware](hardware.md).
-
 ## Authentication
 
-> ### ⚠️ THE DEFAULT IS NO AUTHENTICATION
+> ### ⚠️ The default is NO authentication
 >
-> Out of the box (`AUTH_MODE=open`) **every endpoint and the whole web UI are public** - anyone
-> who can reach the host can print, browse the job queue, and read printer status. This is
-> intentional for the common case: a single printer on a **trusted home LAN**.
->
-> **Do NOT expose this service to the internet, an untrusted network, or a shared host in open
-> mode.** Before doing so, set `AUTH_MODE=protected` and configure at least one token or user -
-> or put the service behind your own reverse-proxy auth / VPN.
+> With `AUTH_MODE=open` (the default) **every endpoint and the whole web UI are public** -
+> anyone who can reach the host can print, browse the queue, and read printer status. That's
+> intentional for a single printer on a **trusted home LAN**, but **do not expose open mode**
+> to the internet or an untrusted network. Set `AUTH_MODE=protected` (below) or put the
+> service behind your own reverse-proxy auth / VPN first.
 
 There are two modes, selected by `AUTH_MODE`:
 
@@ -110,12 +93,33 @@ There are two modes, selected by `AUTH_MODE`:
 
 ### Protected setup
 
-```sh
-# Generate a password hash for a login user (never store plaintext):
-uv run labeljetty-hash-password
-# → pbkdf2_sha256$600000$...$...
+Generate a password hash for a login user (never store plaintext):
 
-# .env
+```sh
+docker compose exec labeljetty labeljetty-hash-password
+# → pbkdf2_sha256$600000$...$...
+```
+
+<details>
+<summary>Not using Compose? - docker / uv / python</summary>
+
+```sh
+# docker
+docker exec labeljetty labeljetty-hash-password
+
+# uv (from a source checkout)
+uv run labeljetty-hash-password
+
+# python (venv with `pip install labeljetty`)
+python -m labeljetty.web.password
+```
+
+</details>
+
+Then put the hash, tokens and a stable session secret in your config (these are env vars -
+set them in the Compose `environment:` block, or a `.env` file outside Docker):
+
+```sh
 AUTH_MODE=protected
 AUTH_TOKENS=[{"name":"ci","token":"choose-a-long-random-secret"}]
 AUTH_USERS=[{"username":"tim","password_hash":"pbkdf2_sha256$600000$...$..."}]
@@ -201,15 +205,40 @@ Examples:
 
 ```sh
 # default (fill) - fills the whole label
-uv run labeljetty-testbench text "Box 12"
+docker compose exec labeljetty labeljetty-testbench text "Box 12"
 
 # width - keep it on one line, sized to the label width
-uv run labeljetty-testbench text "Box 12" --fit width
+docker compose exec labeljetty labeljetty-testbench text "Box 12" --fit width
 
 # fixed size, no auto-fit
+docker compose exec labeljetty labeljetty-testbench text "Box 12" --font-size 40
+```
+
+<details>
+<summary>Not using Compose? - docker / uv / python</summary>
+
+```sh
+# docker (swap `docker compose exec labeljetty` for `docker exec labeljetty`)
+docker exec labeljetty labeljetty-testbench text "Box 12"
+docker exec labeljetty labeljetty-testbench text "Box 12" --fit width
+docker exec labeljetty labeljetty-testbench text "Box 12" --font-size 40
+
+# uv (from a source checkout)
+uv run labeljetty-testbench text "Box 12"
+uv run labeljetty-testbench text "Box 12" --fit width
 uv run labeljetty-testbench text "Box 12" --font-size 40
 
-# via the API
+# python (venv with `pip install labeljetty`)
+python -m labeljetty.testbench text "Box 12"
+python -m labeljetty.testbench text "Box 12" --fit width
+python -m labeljetty.testbench text "Box 12" --font-size 40
+```
+
+</details>
+
+The same label via the REST API (works the same with or without Docker, it's an HTTP call):
+
+```sh
 curl -s -X POST $BASE/print/text -H 'content-type: application/json' \
   -d '{"text":"Box 12", "fit":"width"}'
 ```

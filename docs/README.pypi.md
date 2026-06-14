@@ -23,7 +23,9 @@ This gives you three commands:
 
 You need **Python 3.11+**, **libusb**, and a USB **TSPL** printer. Set at least `PRINTER_USB`
 (e.g. `PRINTER_USB=vid:2d37:pid:62de`, found via `lsusb`) in a `.env` or the environment, then
-run `labeljetty` and open **http://localhost:8888/**.
+run `labeljetty` and open **http://localhost:8888/**. The
+[Setup guide](https://github.com/motey/LabelJetty/blob/main/docs/setup.md) covers the printer,
+the udev rule, and verifying your first label.
 
 > Prefer Docker? The image is [`motey/labeljetty`](https://hub.docker.com/r/motey/labeljetty).
 

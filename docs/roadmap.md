@@ -12,7 +12,7 @@ how it all fits together. This page tracks what's planned next.
 ### Printer auto-discovery
 
 Today you have to find your printer's USB vendor:product id with `lsusb` and set `PRINTER_USB` by
-hand (see [Configuration → Setting up the printer](configuration.md#setting-up-the-printer)). The
+hand (see the [Setup guide](setup.md#3-find-your-printer)). The
 plan is to **auto-detect a connected TSPL printer** when `PRINTER_USB` is unset - matching known
 vendor/product ids (e.g. the Poskey-class `2d37:*` family) and falling back to a clear message
 when several candidates exist. This removes the most fiddly part of first-time setup.

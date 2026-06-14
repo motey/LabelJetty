@@ -185,10 +185,5 @@ rather than a second renderer to keep in sync.
   target.
 - Cloud / multi-tenant hosting; this is a single-LAN, single-printer appliance.
 
-### Stretch ideas (not committed)
-
-- A **raw port-9100 (JetDirect) socket** so power users can add it as a network printer manually.
-  (Full IPP Everywhere / driverless discovery is project-sized and fights the "minimal" principle
-  - better as its own repo.)
-- A label **template library** (named, reusable layouts beyond the Homebox one).
-- **Multi-printer** support.
+Stretch ideas that might relax some of these (raw port-9100 socket, a label template library,
+multi-printer) are tracked in the [Roadmap](roadmap.md#possible--under-consideration).

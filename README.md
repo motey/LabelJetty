@@ -59,10 +59,12 @@ docker compose up -d   # then open http://localhost:8888/
 ```
 
 `PRINTER_USB` is the only required setting (the `vid:...:pid:...` form survives replugging). The
-host still needs a **udev rule** so the container can reach the USB device - see
-[Configuration → Setting up the printer](docs/configuration.md#setting-up-the-printer). The
-committed compose file also has commented blocks for label geometry,
+host also needs a **udev rule** so the container can reach the USB device. The committed compose
+file has commented blocks for label geometry,
 [auth](docs/advanced-usage.md#authentication), and [Homebox](docs/advanced-usage.md#homebox-integration).
+
+> **New here? Start with the [Setup guide](docs/setup.md)** - it walks you from picking a
+> printer through the udev rule to your first printed label.
 
 <details>
 <summary><b>Just testing?</b> A one-off <code>docker run</code> (no compose file)</summary>
@@ -109,7 +111,8 @@ The architecture and trade-offs are in **[Design](docs/design.md)**.
 
 | Doc | What's in it |
 | --- | --- |
-| **[Configuration](docs/configuration.md)** | Every setting (must / should / optional) + setting up the printer (USB id, udev rule, `PRINTER_USB`). |
+| **[Setup guide](docs/setup.md)** | Start here: printer to first label, in order (hardware, host, USB id, udev rule, run, verify). |
+| **[Configuration](docs/configuration.md)** | Every setting (must / should / optional) and the `PRINTER_USB` selector forms. |
 | **[Advanced usage](docs/advanced-usage.md)** | Non-Docker install, authentication, the REST API, text auto-fit, Homebox, Docker tags/arches. |
 | **[Hardware](docs/hardware.md)** | Which cheap 420B-class printer to buy and where (rough, LLM-sourced stub for now). |
 | **[Design](docs/design.md)** | Architecture, the moving parts, and the reasoning behind the design. |

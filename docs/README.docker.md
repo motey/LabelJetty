@@ -35,12 +35,13 @@ docker compose up -d
 Then open **http://localhost:8888/**.
 
 - **`devices: /dev/bus/usb`** gives the container the printer's USB bus (permissions are governed
-  by a host udev rule).
+  by a host **udev rule** you set once, see the [Setup guide](https://github.com/motey/LabelJetty/blob/main/docs/setup.md)).
 - **`PRINTER_USB`** selects which USB device is your printer. `vid:<vendor>:pid:<product>` is the
   robust form; find yours with `lsusb`. This is the only required setting.
 - **`./data:/data`** persists the SQLite job DB and stored images.
 
-Every setting is an env var.
+Every setting is an env var. The [Setup guide](https://github.com/motey/LabelJetty/blob/main/docs/setup.md)
+walks through the printer, the udev rule, and your first label end to end.
 
 ### Just testing?
 

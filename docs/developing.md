@@ -75,8 +75,8 @@ uv run labeljetty
 ```
 
 This starts the REST API, the web UI, and the background worker on `http://localhost:8888/`.
-Copy `sample.env` to `.env` and set at least `PRINTER_USB` first - see
-[Configuration → Setting up the printer](configuration.md#setting-up-the-printer).
+Copy `sample.env` to `.env` and set at least `PRINTER_USB` first - see the
+[Setup guide](setup.md).
 
 Once it's running, the **live API docs** are the fastest way to explore and exercise the
 endpoints while developing: Swagger UI at [`/docs`](http://localhost:8888/docs), ReDoc at
@@ -170,7 +170,7 @@ Per-subcommand options include `--font-size` / `--fit` (text & markdown; see
 ### Against the real printer
 
 Drop `--dry-run` to send to hardware (requires the
-[printer setup](configuration.md#setting-up-the-printer) - udev rule + `PRINTER_USB`):
+[printer setup](setup.md#4-grant-usb-access) - udev rule + `PRINTER_USB`):
 
 ```sh
 # Print the alignment pattern on a 57x32 mm label and verify it lands flush to the edges

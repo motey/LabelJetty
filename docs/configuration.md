@@ -1,100 +1,38 @@
 # Configuration
 
 Every setting is read from an environment variable, or from a `.env` file (see
-[`sample.env`](../sample.env) for a documented template). Under Docker, pass each one as
-`-e KEY=value` or mount a file with `--env-file .env`.
+[`sample.env`](../sample.env) for a documented template). Under Docker, set them in the
+Compose `environment:` block, pass `-e KEY=value`, or mount a file with `--env-file .env`.
+
+> **First time?** The [Setup guide](setup.md) walks you through the printer, the host, and
+> running the service end to end. This page is the settings reference behind it.
 
 - [What you must / should set](#what-you-must--should-set)
-- [Setting up the printer](#setting-up-the-printer)
+- [`PRINTER_USB` selector forms](#printer_usb-selector-forms)
 - [Full reference](#full-reference)
 - [Status reading is optional](#status-reading-is-optional)
 
-> Where to start: copy the sample and edit it.
-> ```sh
-> cp sample.env .env
-> ```
-> Only `PRINTER_USB` must be filled in; everything else has a default.
-
 ## What you must / should set
+
+Only `PRINTER_USB` is required; everything else has a default.
 
 | Priority | Variables | Why |
 | --- | --- | --- |
-| **Must set** | `PRINTER_USB` | The service can't find your printer without it. See [Setting up the printer](#setting-up-the-printer). |
+| **Must set** | `PRINTER_USB` | The service can't find your printer without it. See [Find your printer](setup.md#3-find-your-printer). |
 | **Should set (when exposed beyond a trusted LAN)** | `AUTH_MODE=protected` + `AUTH_TOKENS` and/or `AUTH_USERS`, plus a stable `SESSION_SECRET` | The default is **no authentication**. See [Authentication](advanced-usage.md#authentication). |
 | **Should set (for your label stock)** | `DEFAULT_LABEL_WIDTH_MM`, `DEFAULT_LABEL_HEIGHT_MM`, `DEFAULT_DPI` | So jobs that don't specify a size match your actual labels. Add `LABEL_PROFILES` for one-click sizes in the UI. |
 | **Should set (outside Docker)** | absolute `SQLITE_PATH` and `IMAGE_STORAGE_DIRECTORY` | They resolve relative to the working directory; absolute paths avoid surprises. The Docker image already points both at `/data`. |
 | **Optional** | `HOMEBOX_*`, `SERVER_LISTENING_*`, `DELETE_OLD_JOBS_AFTER_DAYS`, `LOG_*` | Sensible defaults; set only if you need them. `HOMEBOX_*` enables the [Homebox module](advanced-usage.md#homebox-integration). |
 
-## Setting up the printer
+## `PRINTER_USB` selector forms
 
-Talking to the printer over raw USB needs two things: **permission** to access the USB device
-node, and a **`PRINTER_USB` selector** telling the service which device to use.
-
-> **On the roadmap: USB auto-discovery** so you won't have to find and set `PRINTER_USB` by hand
-> for common printers. Until then, the steps below are manual. See the
-> [Roadmap](roadmap.md#printer-auto-discovery).
-
-### 1. Find your printer
+`PRINTER_USB` selects which USB device is the printer. The most robust form is
+**vendor:product id** (read off `lsusb`, see [Find your printer](setup.md#3-find-your-printer)),
+because - unlike a bus/address - it survives replugging:
 
 ```sh
-lsusb
-```
-
-Look for your label printer, e.g.:
-
-```
-Bus 001 Device 015: ID 2d37:62de Zhuhai Poskey Technology Co.,Ltd 420B
-```
-
-Here the **vendor:product id** is `2d37:62de` - note these down. (Not sure which printer to buy?
-See [Hardware](hardware.md).)
-
-### 2. Grant USB access (udev rule)
-
-By default a normal user cannot open the USB device, which fails with:
-
-```
-usb.core.USBError: [Errno 13] Access denied (insufficient permissions)
-```
-
-Fix it with a udev rule that gives the `plugdev` group access (most desktop users are already in
-`plugdev` - check with `groups`). Replace the ids with **your** printer's:
-
-```sh
-sudo tee /etc/udev/rules.d/99-tspl-printer.rules >/dev/null <<'EOF'
-# TSPL label printer - allow plugdev group to access it over raw USB
-SUBSYSTEM=="usb", ATTRS{idVendor}=="2d37", ATTRS{idProduct}=="62de", MODE="0660", GROUP="plugdev"
-EOF
-
-# Reload rules and re-trigger (or just unplug/replug the printer)
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
-
-If you are not in `plugdev`, add yourself and log out/in:
-
-```sh
-sudo usermod -aG plugdev "$USER"
-```
-
-> **Docker note:** the container relies on this *host* udev rule too - `--device=/dev/bus/usb`
-> passes the device through, but the host still governs its permissions.
-
-> Quick alternative for a one-off test: run the command with `sudo` (e.g.
-> `sudo uv run labeljetty-testbench status`). The udev rule is the proper, persistent solution
-> and is what you want on an always-on box.
-
-### 3. Select the printer (`PRINTER_USB`)
-
-The `PRINTER_USB` variable selects the device. The most robust selector is **vendor:product id**,
-because - unlike a USB bus/address - it survives replugging:
-
-```sh
-# .env
 PRINTER_USB=vid:2d37:pid:62de
 ```
-
-Supported `PRINTER_USB` forms:
 
 | Form | Example | Notes |
 | --- | --- | --- |
@@ -105,25 +43,14 @@ Supported `PRINTER_USB` forms:
 | Device path | `path:/dev/bus/usb/001/015` | Changes on replug |
 | Bus + address | `bus:1:addr:15` | Changes on replug |
 
-### 4. Verify
-
-Print the built-in alignment pattern - the surest test that the printer works and that the label
-geometry is right:
-
-```sh
-uv run labeljetty-testbench pattern
-```
-
-A correctly configured label shows a border flush to all four edges, with the millimetre ruler
-ticks landing on whole millimetres. Adjust `--width-mm` / `--height-mm` / `--dpi` to match your
-label stock. More testbench commands are in
-[Developing](developing.md#real-world-print-tests-with-the-testbench).
+> **On the roadmap: USB auto-discovery** so common printers are detected without setting
+> `PRINTER_USB` by hand. See the [Roadmap](roadmap.md#printer-auto-discovery).
 
 ## Full reference
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PRINTER_USB` | *(required)* | Which USB printer to use (see [forms above](#3-select-the-printer-printer_usb)) |
+| `PRINTER_USB` | *(required)* | Which USB printer to use (see [forms above](#printer_usb-selector-forms)) |
 | `SERVER_LISTENING_HOST` | `localhost` | API bind host (use `0.0.0.0` to expose on the LAN) |
 | `SERVER_LISTENING_PORT` | `8888` | API port |
 | `AUTH_MODE` | `open` | `open` (no auth) or `protected` - see [Authentication](advanced-usage.md#authentication) |
@@ -150,19 +77,18 @@ label stock. More testbench commands are in
 | `LOG_DISABLE_COLORS` | `false` | Disable ANSI colours (useful when logging to a file/journal) |
 | `UVICORN_LOG_LEVEL` | *(= `LOG_LEVEL`)* | Web-server log level |
 
-> **Note:** `SQLITE_PATH` and `IMAGE_STORAGE_DIRECTORY` are resolved **relative to the current
-> working directory**. Run the service from the same directory each time, or set absolute paths.
-> The Docker image already sets both to `/data`.
->
-> A non-standard override, `LABELJETTY_DOT_ENV_FILE`, points at a different `.env` path (used by
-> the test harness to ignore the real one).
+> **Note:** `SQLITE_PATH` and `IMAGE_STORAGE_DIRECTORY` resolve **relative to the current
+> working directory**. Run the service from the same directory each time, or set absolute
+> paths. The Docker image already sets both to `/data`. A non-standard override,
+> `LABELJETTY_DOT_ENV_FILE`, points at a different `.env` path (used by the test harness to
+> ignore the real one).
 
 ## Status reading is optional
 
-Many cheap TSPL printers (Xprinter / Poskey-class clones, including the reference Vretti 420B)
-have an effectively **write-only USB interface**: they print fine but never answer status
-queries. On such a printer `testbench status` prints *"status: not available"* and the API's
-`/printer/status` returns `status_supported: false`. **This does not affect printing** - the
-service treats an unreadable status as "ready" and prints anyway. You only get live status
-(ready / paper out / head open / ...) on printers that implement it. Use `testbench probe` to
-check whether yours does.
+Many cheap TSPL printers (Xprinter / Poskey-class clones, including the reference Vretti
+420B) have an effectively **write-only USB interface**: they print fine but never answer
+status queries. On such a printer `testbench status` prints *"status: not available"* and
+the API's `/printer/status` returns `status_supported: false`. **This does not affect
+printing** - the service treats an unreadable status as "ready" and prints anyway. You only
+get live status (ready / paper out / head open / ...) on printers that implement it. Use
+`testbench probe` to check whether yours does.

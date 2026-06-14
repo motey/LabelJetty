@@ -1,8 +1,9 @@
 # Build & release process
 
 A starting point for anyone diving into how `labeljetty` is versioned, built, and
-shipped. The user-facing summary lives in the [README](../README.md#releases--versioning);
-this document is the deeper reference.
+shipped. Image tags and supported architectures from a user's point of view are in
+[Advanced usage → Docker](advanced-usage.md#docker-tags--architectures); this document is the
+deeper build/release reference.
 
 ## Overview
 
