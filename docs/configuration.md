@@ -14,11 +14,12 @@ Compose `environment:` block, pass `-e KEY=value`, or mount a file with `--env-f
 
 ## What you must / should set
 
-Only `PRINTER_USB` is required; everything else has a default.
+Nothing is strictly required - an unset `PRINTER_USB` auto-detects the printer - but you
+should set it (and review auth) for a stable, secure deployment.
 
 | Priority | Variables | Why |
 | --- | --- | --- |
-| **Must set** | `PRINTER_USB` | The service can't find your printer without it. See [Find your printer](setup.md#3-find-your-printer). |
+| **Should set (recommended)** | `PRINTER_USB` | Left unset, LabelJetty auto-detects a connected TSPL printer; pin it so the right device is always used (and to get a clear error rather than a scan). See [Find your printer](setup.md#3-find-your-printer). |
 | **Should set (when exposed beyond a trusted LAN)** | `AUTH_MODE=protected` + `AUTH_TOKENS` and/or `AUTH_USERS`, plus a stable `SESSION_SECRET` | The default is **no authentication**. See [Authentication](advanced-usage.md#authentication). |
 | **Should set (for your label stock)** | `DEFAULT_LABEL_WIDTH_MM`, `DEFAULT_LABEL_HEIGHT_MM`, `DEFAULT_DPI` | So jobs that don't specify a size match your actual labels. Add `LABEL_PROFILES` for one-click sizes in the UI. |
 | **Should set (outside Docker)** | absolute `SQLITE_PATH` and `IMAGE_STORAGE_DIRECTORY` | They resolve relative to the working directory; absolute paths avoid surprises. The Docker image already points both at `/data`. |
@@ -26,9 +27,12 @@ Only `PRINTER_USB` is required; everything else has a default.
 
 ## `PRINTER_USB` selector forms
 
-`PRINTER_USB` selects which USB device is the printer. The most robust form is
-**vendor:product id** (read off `lsusb`, see [Find your printer](setup.md#3-find-your-printer)),
-because - unlike a bus/address - it survives replugging:
+`PRINTER_USB` selects which USB device is the printer. **Leave it unset to auto-detect**
+a connected TSPL printer (matches known vendors and USB printer-class devices) - LabelJetty
+uses it when exactly one is found, and lists candidates if several are. To pin a specific
+device, the most robust form is **vendor:product id** (read off `lsusb`, see
+[Find your printer](setup.md#3-find-your-printer)), because - unlike a bus/address - it
+survives replugging:
 
 ```sh
 PRINTER_USB=vid:2d37:pid:62de
@@ -43,14 +47,14 @@ PRINTER_USB=vid:2d37:pid:62de
 | Device path | `path:/dev/bus/usb/001/015` | Changes on replug |
 | Bus + address | `bus:1:addr:15` | Changes on replug |
 
-> **On the roadmap: USB auto-discovery** so common printers are detected without setting
-> `PRINTER_USB` by hand. See the [Roadmap](roadmap.md#printer-auto-discovery).
+> **USB auto-discovery** detects common printers without setting `PRINTER_USB` by hand -
+> just leave it unset. Run `labeljetty-testbench list-printers` to see what it finds.
 
 ## Full reference
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PRINTER_USB` | *(required)* | Which USB printer to use (see [forms above](#printer_usb-selector-forms)) |
+| `PRINTER_USB` | *(unset → auto-detect)* | Which USB printer to use; unset auto-detects (see [forms above](#printer_usb-selector-forms)) |
 | `SERVER_LISTENING_HOST` | `localhost` | API bind host (use `0.0.0.0` to expose on the LAN) |
 | `SERVER_LISTENING_PORT` | `8888` | API port |
 | `AUTH_MODE` | `open` | `open` (no auth) or `protected` - see [Authentication](advanced-usage.md#authentication) |

@@ -8,12 +8,170 @@ import glob
 import os
 
 
+# Curated allowlist of USB vendor IDs known to speak TSPL, used by auto-discovery
+# when PRINTER_USB is unset. The value is a human-readable label for log output.
+# This list is meant to GROW from verified user reports — add an entry here when a
+# new TSPL printer is confirmed (see docs/hardware.md). Unknown printers are still
+# picked up by the USB printer-class heuristic (see ``discover``), so this list is
+# a precision aid, not the only path to detection.
+KNOWN_TSPL_VENDORS: dict[int, str] = {
+    0x2D37: "Poskey / Vretti-class (e.g. 420B)",  # verified reference hardware
+}
+
+# USB interface class for printers (USB-IF base class 7). Devices advertising it
+# are treated as discovery candidates even if their vendor id is not in the
+# allowlist above.
+_USB_CLASS_PRINTER = 7
+
+
 class TSPLPrinterConnectionUSB:
     """
     Automatically detects a TSPL printer by probing USB devices and sending
     a harmless TSPL query command (~!T). Maintains connection and allows
     sending TSPL commands via .send().
     """
+
+    # ----------------------------------
+    # --- Lookup: Auto-discovery     ---
+    # ----------------------------------
+    @staticmethod
+    def selector_for(dev: Device) -> str:
+        """The ``PRINTER_USB=vid:..:pid:..`` selector that pins this exact device."""
+        return f"vid:{dev.idVendor:04x}:pid:{dev.idProduct:04x}"
+
+    @staticmethod
+    def describe(dev: Device) -> str:
+        """Best-effort human label for ``dev`` (manufacturer/product strings plus a
+        known-vendor note). Never raises — string-descriptor reads can fail on
+        permissions, so they are treated as optional."""
+        parts: List[str] = []
+        for attr in ("iManufacturer", "iProduct"):
+            try:
+                value = usb.util.get_string(dev, getattr(dev, attr))
+            except Exception:
+                value = None
+            if value:
+                parts.append(value)
+        label = " ".join(parts).strip()
+        known = KNOWN_TSPL_VENDORS.get(dev.idVendor)
+        if label and known:
+            return f"{label} — {known}"
+        return label or known or "unknown device"
+
+    @staticmethod
+    def _is_printer_class(dev: Device) -> bool:
+        """True if any interface advertises the USB printer class (7).
+
+        Reads only the already-enumerated descriptors — no device is claimed.
+        """
+        try:
+            for cfg in dev:
+                for intf in cfg:
+                    if intf.bInterfaceClass == _USB_CLASS_PRINTER:
+                        return True
+        except Exception:
+            pass
+        return False
+
+    @classmethod
+    def _matches(cls, dev: Device) -> bool:
+        """Discovery predicate: known TSPL vendor OR generic USB printer class."""
+        if dev.idVendor in KNOWN_TSPL_VENDORS:
+            return True
+        return cls._is_printer_class(dev)
+
+    @classmethod
+    def discover(cls) -> List[Device]:
+        """Passively enumerate USB devices that look like TSPL printers.
+
+        A device is a candidate when its vendor id is in ``KNOWN_TSPL_VENDORS`` or
+        it exposes the USB printer interface class (7). This is pure descriptor
+        enumeration — nothing is claimed, no kernel driver is detached, nothing is
+        written to the device — so it is safe to run unattended (e.g. on every job
+        when ``PRINTER_USB`` is unset).
+        """
+        found = usb.core.find(find_all=True)
+        if found is None:
+            return []
+        return [dev for dev in found if cls._matches(dev)]
+
+    @classmethod
+    def autodetect(cls) -> Self:
+        """Resolve the connection by auto-discovery, used when ``PRINTER_USB`` is
+        unset. Decides among the discovered candidates:
+
+        - 0 found  -> ``ValueError`` telling the user to plug in / set PRINTER_USB.
+        - 1 found  -> use it (and report which one, so it can be pinned in .env).
+        - 2+ found -> ``ValueError`` listing each as a copy-paste PRINTER_USB
+          selector; auto-detect deliberately does not guess.
+        """
+        candidates = cls.discover()
+
+        if not candidates:
+            raise ValueError(
+                "No TSPL printer auto-detected. Connect the printer and power it "
+                "on, or set PRINTER_USB manually — run `lsusb` to find its "
+                "vid:pid (see the Setup guide, 'Find your printer')."
+            )
+
+        if len(candidates) > 1:
+            listing = "\n".join(
+                f"    PRINTER_USB={cls.selector_for(d)}   ({cls.describe(d)})"
+                for d in candidates
+            )
+            raise ValueError(
+                "Multiple TSPL printers detected — auto-detect will not guess. "
+                "Set PRINTER_USB to one of:\n" + listing
+            )
+
+        dev = candidates[0]
+        print(
+            f"Auto-detected TSPL printer: {cls.selector_for(dev)} "
+            f"({cls.describe(dev)})"
+        )
+        return cls(dev)
+
+    def info(self) -> dict:
+        """Best-effort USB facts about the selected device, for display in the UI
+        and the ``/printer/info`` endpoint.
+
+        Reads only descriptors (no claim required), and never raises —
+        string-descriptor reads can fail on permissions or a busy device, in
+        which case the field is simply ``None``.
+        """
+        dev = self.dev
+
+        def _string(attr: str) -> Optional[str]:
+            try:
+                return usb.util.get_string(dev, getattr(dev, attr)) or None
+            except Exception:
+                return None
+
+        try:
+            ports = dev.port_numbers
+            port_path = "-".join(str(n) for n in ports) if ports else None
+        except Exception:
+            port_path = None
+
+        return {
+            "vendor_id": f"{dev.idVendor:04x}",
+            "product_id": f"{dev.idProduct:04x}",
+            "selector": self.selector_for(dev),
+            "bus": getattr(dev, "bus", None),
+            "address": getattr(dev, "address", None),
+            "port_path": port_path,
+            "device_path": (
+                f"/dev/bus/usb/{dev.bus:03d}/{dev.address:03d}"
+                if getattr(dev, "bus", None) is not None
+                and getattr(dev, "address", None) is not None
+                else None
+            ),
+            "serial": _string("iSerialNumber"),
+            "manufacturer": _string("iManufacturer"),
+            "product": _string("iProduct"),
+            "description": self.describe(dev),
+            "known_vendor": KNOWN_TSPL_VENDORS.get(dev.idVendor),
+        }
 
     # -------------------------
     # --- Lookup: VID / PID ---

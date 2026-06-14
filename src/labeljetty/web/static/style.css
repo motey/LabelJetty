@@ -132,6 +132,16 @@ table.jobs th { color: var(--muted); font-weight: 500; }
 .status-card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem; }
 .status-card .k { font-size: 0.75rem; color: var(--muted); }
 .status-card .v { font-size: 1rem; font-weight: 600; margin-top: 0.15rem; }
+.status-card.wide { grid-column: 1 / -1; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.6rem;
+      margin: 0.45rem 0 0; font-size: 0.8rem; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; word-break: break-all; }
+.pin-hint { margin-top: 0.55rem; padding: 0.45rem 0.6rem; border: 1px dashed var(--border);
+            border-radius: 6px; font-size: 0.78rem; color: var(--muted); }
+.pin-hint code { color: var(--text); background: var(--panel); padding: 0.05rem 0.3rem;
+                 border-radius: 4px; }
 
 .htmx-indicator { opacity: 0; transition: opacity 0.2s; }
 .htmx-request .htmx-indicator { opacity: 1; }

@@ -166,6 +166,7 @@ All routes are under the `/api` prefix. In `protected` mode, send an API token a
 | `GET  /api/jobs/{job_id}` | - | Status of a single job |
 | `GET  /api/worker/status` | - | Background worker health |
 | `GET  /api/printer/status` | - | `{reachable, status_supported, status}`; `503` only if the device can't be opened |
+| `GET  /api/printer/info` | - | USB facts about the selected printer (`selector`, `vendor_id`/`product_id`, `serial`, `port_path`, `autodetected`, …); `503` if no printer resolves |
 | `GET  /api/version` | - | The running service version |
 
 All print endpoints also accept optional `label_width_mm`, `label_height_mm`, `dpi` and `copies`

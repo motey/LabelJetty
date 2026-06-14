@@ -135,6 +135,27 @@ def send_raw(printer, args) -> int:
     return 1
 
 
+def list_printers() -> int:
+    """Print every auto-discovered TSPL printer as a copy-paste PRINTER_USB
+    selector. The diagnostic for the multi-printer case: pick one line and put
+    it in your .env."""
+    from labeljetty.printer.connection import TSPLPrinterConnectionUSB as Conn
+
+    devices = Conn.discover()
+    if not devices:
+        print("No TSPL printers detected. Connect the printer and power it on, "
+              "then re-run. (`lsusb` lists all USB devices.)")
+        return 1
+
+    print(f"Detected {len(devices)} candidate TSPL printer(s):\n")
+    for dev in devices:
+        print(f"  PRINTER_USB={Conn.selector_for(dev)}   ({Conn.describe(dev)})")
+    if len(devices) > 1:
+        print("\nMore than one candidate — set PRINTER_USB to one of the above "
+              "to pin it (auto-detect refuses to guess between several).")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="TSPL library test bench")
     parser.add_argument(
@@ -163,6 +184,10 @@ def main(argv=None) -> int:
 
     sub = parser.add_subparsers(dest="command", required=True)
 
+    sub.add_parser(
+        "list-printers",
+        help="Auto-discover connected TSPL printers and print PRINTER_USB selectors.",
+    )
     sub.add_parser("pattern", help="Print the alignment/ruler test pattern.")
     sub.add_parser("status", help="Query and print the live printer status.")
     sub.add_parser(
@@ -225,6 +250,10 @@ def main(argv=None) -> int:
     p_qr.add_argument("--text", default=None, help="Optional human-readable text.")
 
     args = parser.parse_args(argv)
+
+    # Discovery diagnostic — runs without opening a printer.
+    if args.command == "list-printers":
+        return list_printers()
 
     try:
         printer = build_printer(args)

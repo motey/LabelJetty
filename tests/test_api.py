@@ -129,6 +129,35 @@ def test_printer_status_unreachable(client):
     assert resp.status_code == 503
 
 
+def test_printer_info(client, patch_printer_connection):
+    resp = client.get("/api/printer/info")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["selector"] == "vid:2d37:pid:62de"
+    assert body["vendor_id"] == "2d37"
+    assert body["serial"] == "ABC123"
+    assert body["device_path"] == "/dev/bus/usb/001/004"
+    # conftest sets PRINTER_USB=vid:0000:pid:0000 → this device is pinned, not auto.
+    assert body["autodetected"] is False
+    assert body["configured_selector"] == "vid:0000:pid:0000"
+
+
+def test_printer_info_autodetected_flag(client, patch_printer_connection, monkeypatch):
+    # With PRINTER_USB unset, the endpoint reports the device as auto-detected.
+    monkeypatch.setattr(api_mod.config, "PRINTER_USB", None)
+    resp = client.get("/api/printer/info")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["autodetected"] is True
+    assert body["configured_selector"] is None
+
+
+def test_printer_info_unresolvable(client):
+    # No fake connection → real USB lookup for vid:0000 fails → 503.
+    resp = client.get("/api/printer/info")
+    assert resp.status_code == 503
+
+
 # --------------------------------------------------------------------------- #
 #  Homebox push label-service endpoint
 # --------------------------------------------------------------------------- #

@@ -139,6 +139,23 @@ class FakeConnection:
     def query(self, cmd, timeout: int = 1000, max_length: int = 1024, raw: bool = False):
         return bytes([self.status_byte])
 
+    # discovery / info
+    def info(self) -> dict:
+        return {
+            "vendor_id": "2d37",
+            "product_id": "62de",
+            "selector": "vid:2d37:pid:62de",
+            "bus": 1,
+            "address": 4,
+            "port_path": "3-1-2",
+            "device_path": "/dev/bus/usb/001/004",
+            "serial": "ABC123",
+            "manufacturer": "Poskey",
+            "product": "420B",
+            "description": "Poskey 420B — Poskey / Vretti-class (e.g. 420B)",
+            "known_vendor": "Poskey / Vretti-class (e.g. 420B)",
+        }
+
 
 @pytest.fixture
 def fake_connection():

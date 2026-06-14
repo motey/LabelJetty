@@ -28,6 +28,12 @@ The image bundles everything else it needs (libusb, the DejaVu font).
 
 ## 3. Find your printer
 
+> **The quick path: leave `PRINTER_USB` unset.** LabelJetty auto-detects a connected
+> TSPL printer (it matches known vendors and generic USB printer-class devices). If
+> exactly one is found it just works; if several are found it stops and lists them so
+> you can pick one. You still need the **vendor:product id** for the udev rule in step 4,
+> so note it down below either way.
+
 Plug the printer in and list USB devices:
 
 ```sh
@@ -40,10 +46,17 @@ Find your label printer, e.g.:
 Bus 001 Device 015: ID 2d37:62de Zhuhai Poskey Technology Co.,Ltd 420B
 ```
 
-The **vendor:product id** here is `2d37:62de` - note it down. You will use it as
+The **vendor:product id** here is `2d37:62de`. To **pin** this exact device (instead of
+relying on auto-detect - recommended if you have more than one USB printer), set
 `PRINTER_USB=vid:2d37:pid:62de` below. This `vid:pid` form is the most robust selector
 because it survives replugging; other forms are listed in
 [Configuration](configuration.md#printer_usb-selector-forms).
+
+To see exactly what auto-detect finds (as ready-to-paste selectors), run:
+
+```sh
+uv run labeljetty-testbench list-printers
+```
 
 ## 4. Grant USB access
 
@@ -96,7 +109,7 @@ services:
     devices:
       - /dev/bus/usb:/dev/bus/usb      # the printer's USB bus
     environment:
-      PRINTER_USB: vid:2d37:pid:62de   # from step 3; the only required setting
+      PRINTER_USB: vid:2d37:pid:62de   # from step 3; omit to auto-detect the printer
     volumes:
       - ./data:/data                   # persists the job DB + stored images
 ```

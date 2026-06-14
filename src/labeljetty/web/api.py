@@ -340,6 +340,62 @@ async def printer_status(
             con.disconnect()
 
 
+class PrinterInfoResponse(BaseModel):
+    autodetected: bool = Field(
+        description="True if the device was auto-detected (PRINTER_USB unset) "
+        "rather than pinned to an explicit selector."
+    )
+    configured_selector: Optional[str] = Field(
+        default=None,
+        description="The configured PRINTER_USB value, or null when auto-detecting.",
+    )
+    selector: str = Field(
+        description="The vid:..:pid:.. selector that pins this exact device — "
+        "set it as PRINTER_USB to stop relying on auto-detection."
+    )
+    vendor_id: str = Field(description="USB vendor id (hex, e.g. '2d37').")
+    product_id: str = Field(description="USB product id (hex, e.g. '62de').")
+    bus: Optional[int] = Field(default=None, description="USB bus number.")
+    address: Optional[int] = Field(default=None, description="USB device address.")
+    port_path: Optional[str] = Field(
+        default=None, description="USB port path (e.g. '3-1-2'), stable per port."
+    )
+    device_path: Optional[str] = Field(
+        default=None, description="Kernel device path (e.g. '/dev/bus/usb/001/004')."
+    )
+    serial: Optional[str] = Field(default=None, description="USB serial number, if any.")
+    manufacturer: Optional[str] = Field(default=None, description="USB manufacturer string.")
+    product: Optional[str] = Field(default=None, description="USB product string.")
+    description: Optional[str] = Field(
+        default=None, description="Human-friendly device label."
+    )
+    known_vendor: Optional[str] = Field(
+        default=None, description="Label for a recognised TSPL vendor, if matched."
+    )
+
+
+@fast_api_router.get("/printer/info", tags=["Status"])
+async def printer_info(
+    access: Annotated[bool, Depends(require_access)],
+) -> PrinterInfoResponse:
+    """USB facts about the selected printer. Resolves the device (running
+    auto-discovery when PRINTER_USB is unset) but does not claim it, so it is
+    safe to call while the worker is printing."""
+    try:
+        con = config.get_printer_connection()
+    except Exception as e:
+        # 0 or several candidates during auto-discovery, or a bad selector.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Could not resolve printer: {e}",
+        )
+    return PrinterInfoResponse(
+        autodetected=not config.PRINTER_USB,
+        configured_selector=config.PRINTER_USB,
+        **con.info(),
+    )
+
+
 # --------------------------------------------------------------------------- #
 #  Homebox push: external label service
 # --------------------------------------------------------------------------- #

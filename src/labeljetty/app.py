@@ -18,7 +18,10 @@ def run():
     log.info(f"LOG_LEVEL: {config.LOG_LEVEL}")
     log.info(f"UVICORN_LOG_LEVEL: {get_uvicorn_loglevel()}")
     log.info(f"Create image storage directory at '{config.IMAGE_STORAGE_DIRECTORY}'")
-    log.info(f"USB Printer at {config.PRINTER_USB} if not exists")
+    if config.PRINTER_USB:
+        log.info(f"USB printer selector: {config.PRINTER_USB}")
+    else:
+        log.info("PRINTER_USB unset — auto-detecting a connected TSPL printer")
     if config.auth_enabled():
         log.info(f"AUTH_MODE=protected — {len(config.AUTH_TOKENS)} token(s), {len(config.AUTH_USERS)} user(s)")
     else:

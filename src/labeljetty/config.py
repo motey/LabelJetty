@@ -159,10 +159,14 @@ class Config(BaseSettings):
             dpi=self.DEFAULT_DPI,
         )
         return [default, *self.LABEL_PROFILES]
-    # USB Printer - Choose ONE of these methods:
-    PRINTER_USB: str = Field(
+    # USB Printer - leave UNSET to auto-detect a connected TSPL printer, or pin a
+    # specific device with ONE of the selector forms below.
+    PRINTER_USB: Optional[str] = Field(
+        default=None,
         description=(
-            "USB printer identifier. Can be:\n"
+            "USB printer identifier. Leave unset to auto-detect a connected TSPL "
+            "printer (matches known vendors and USB printer-class devices). "
+            "To pin a device, use one of:\n"
             "  - Serial number:     'serial:ABC123456'\n"
             "  - Device path:       'path:/dev/bus/usb/001/004' or 'path:001/004'\n"
             "  - USB port:          'port:3-1-2'\n"
@@ -178,23 +182,15 @@ class Config(BaseSettings):
         ],
     )
 
-    @model_validator(mode="after")
-    def validate_printer_config(self) -> Self:
-        """Ensure printer USB identifier is provided"""
-        if not self.PRINTER_USB:
-            raise ValueError(
-                "PRINTER_USB must be set. Examples:\n"
-                "  PRINTER_USB=serial:ABC123456\n"
-                "  PRINTER_USB=port:3-1-2\n"
-                "  PRINTER_USB=vid:1234:pid:5678"
-            )
-        return self
-
     def get_printer_connection(self) -> "TSPLPrinterConnectionUSB":
-        """Returns a printer connection using the configured identifier"""
+        """Returns a printer connection using the configured identifier, or
+        auto-detects a connected TSPL printer when ``PRINTER_USB`` is unset."""
         from labeljetty.printer.connection import TSPLPrinterConnectionUSB
 
         usb_id = self.PRINTER_USB
+
+        if not usb_id:
+            return TSPLPrinterConnectionUSB.autodetect()
 
         if usb_id.startswith("serial:"):
             serial = usb_id.split(":", 1)[1]

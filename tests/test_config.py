@@ -15,10 +15,17 @@ def make_config(**overrides) -> Config:
 # --------------------------------------------------------------------------- #
 #  Validation
 # --------------------------------------------------------------------------- #
-def test_printer_usb_required(monkeypatch):
+def test_printer_usb_unset_routes_to_autodetect(monkeypatch):
+    # PRINTER_USB is now optional: unset means "auto-detect a connected printer".
     monkeypatch.delenv("PRINTER_USB", raising=False)
-    with pytest.raises(Exception):
-        Config(_env_file=None)
+    cfg = Config(_env_file=None)
+    assert cfg.PRINTER_USB is None
+    monkeypatch.setattr(
+        conn_mod.TSPLPrinterConnectionUSB,
+        "autodetect",
+        classmethod(lambda cls: "autodetected"),
+    )
+    assert cfg.get_printer_connection() == "autodetected"
 
 
 def test_protected_requires_a_provider():

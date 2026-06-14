@@ -122,3 +122,131 @@ def test_by_device_path_bad_format():
 def test_by_device_path_non_numeric():
     with pytest.raises(ValueError):
         Conn.by_device_path("aa/bb")
+
+
+# --------------------------------------------------------------------------- #
+#  Auto-discovery
+# --------------------------------------------------------------------------- #
+class FakeIntf:
+    def __init__(self, interface_class):
+        self.bInterfaceClass = interface_class
+
+
+class FakeCfg:
+    def __init__(self, interfaces):
+        self._interfaces = interfaces
+
+    def __iter__(self):
+        return iter(self._interfaces)
+
+
+class FakeDiscDev:
+    """A fake device iterable over configs/interfaces (for printer-class checks)."""
+
+    def __init__(self, idVendor, idProduct, interface_class=0xFF):
+        self.idVendor = idVendor
+        self.idProduct = idProduct
+        self.iManufacturer = 1
+        self.iProduct = 2
+        self._cfgs = [FakeCfg([FakeIntf(interface_class)])]
+
+    def __iter__(self):
+        return iter(self._cfgs)
+
+
+def _patch_find(monkeypatch, devices):
+    """Make usb.core.find return ``devices`` (and stub string reads)."""
+
+    def fake_find(find_all=False, idVendor=None, idProduct=None):
+        matches = list(devices)
+        if idVendor is not None:
+            matches = [d for d in matches if d.idVendor == idVendor]
+        if idProduct is not None:
+            matches = [d for d in matches if d.idProduct == idProduct]
+        return iter(matches) if find_all else (matches[0] if matches else None)
+
+    monkeypatch.setattr(usb.core, "find", fake_find)
+    monkeypatch.setattr(usb.util, "get_string", lambda d, idx: "FakeMfg")
+
+
+def test_selector_for_formats_vid_pid():
+    assert Conn.selector_for(FakeDiscDev(0x2d37, 0x62de)) == "vid:2d37:pid:62de"
+
+
+def test_discover_matches_known_vendor(monkeypatch):
+    # 0x2d37 is in the allowlist; interface class is irrelevant here.
+    dev = FakeDiscDev(0x2d37, 0x62de, interface_class=0xFF)
+    _patch_find(monkeypatch, [dev])
+    assert Conn.discover() == [dev]
+
+
+def test_discover_matches_printer_class(monkeypatch):
+    # Unknown vendor, but advertises the USB printer class (7).
+    dev = FakeDiscDev(0x1234, 0x5678, interface_class=7)
+    _patch_find(monkeypatch, [dev])
+    assert Conn.discover() == [dev]
+
+
+def test_discover_ignores_non_printer(monkeypatch):
+    # Unknown vendor and a non-printer interface class -> not a candidate.
+    dev = FakeDiscDev(0x1234, 0x5678, interface_class=0x08)  # mass storage
+    _patch_find(monkeypatch, [dev])
+    assert Conn.discover() == []
+
+
+def test_discover_filters_mixed_bus(monkeypatch):
+    printer = FakeDiscDev(0x2d37, 0x62de)
+    other = FakeDiscDev(0x1234, 0x5678, interface_class=0x03)  # HID
+    _patch_find(monkeypatch, [other, printer])
+    assert Conn.discover() == [printer]
+
+
+def test_autodetect_single(monkeypatch):
+    dev = FakeDiscDev(0x2d37, 0x62de)
+    _patch_find(monkeypatch, [dev])
+    assert Conn.autodetect().dev is dev
+
+
+def test_autodetect_none_raises(monkeypatch):
+    _patch_find(monkeypatch, [])
+    with pytest.raises(ValueError, match="No TSPL printer auto-detected"):
+        Conn.autodetect()
+
+
+def test_info_reports_usb_facts(monkeypatch):
+    dev = FakeDiscDev(0x2d37, 0x62de)
+    _patch_find(monkeypatch, [dev])
+    # bus/address/port_numbers come from the richer fake used by the lookup tests.
+    dev.bus = 1
+    dev.address = 4
+    dev.port_numbers = [3, 1, 2]
+    dev.iSerialNumber = 3
+    info = Conn(dev).info()
+    assert info["selector"] == "vid:2d37:pid:62de"
+    assert info["vendor_id"] == "2d37"
+    assert info["product_id"] == "62de"
+    assert info["port_path"] == "3-1-2"
+    assert info["device_path"] == "/dev/bus/usb/001/004"
+    assert info["serial"] == "FakeMfg"  # stubbed get_string
+    assert info["known_vendor"] == "Poskey / Vretti-class (e.g. 420B)"
+
+
+def test_info_never_raises_on_bad_descriptors(monkeypatch):
+    dev = FakeDiscDev(0x1234, 0x5678, interface_class=7)
+    # get_string blows up; port_numbers missing → info degrades to None, no raise.
+    monkeypatch.setattr(usb.util, "get_string", lambda d, idx: (_ for _ in ()).throw(ValueError()))
+    info = Conn(dev).info()
+    assert info["serial"] is None
+    assert info["manufacturer"] is None
+    assert info["selector"] == "vid:1234:pid:5678"
+    assert info["known_vendor"] is None
+
+
+def test_autodetect_multiple_raises_with_selectors(monkeypatch):
+    devs = [FakeDiscDev(0x2d37, 0x62de), FakeDiscDev(0x1234, 0x5678, interface_class=7)]
+    _patch_find(monkeypatch, devs)
+    with pytest.raises(ValueError, match="Multiple TSPL printers") as exc:
+        Conn.autodetect()
+    # Each candidate is offered as a copy-paste PRINTER_USB selector.
+    assert "PRINTER_USB=vid:2d37:pid:62de" in str(exc.value)
+    assert "PRINTER_USB=vid:1234:pid:5678" in str(exc.value)

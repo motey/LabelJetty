@@ -488,11 +488,15 @@ async def ui_status(
     printer_status = None
     printer_supported = False
     printer_error = None
+    printer_info = None
     con = None
     try:
         from labeljetty.printer import TSPLPrinter
 
         con = config.get_printer_connection()
+        # USB facts don't need the device claimed, so gather them first — they
+        # stay available even if the connect() below fails (e.g. busy worker).
+        printer_info = con.info()
         # Fail fast and always release — see disconnect() / printer_status notes.
         con.connect(max_retries=1)
         printer = TSPLPrinter(
@@ -520,5 +524,7 @@ async def ui_status(
             "printer_supported": printer_supported,
             "printer_status": printer_status,
             "printer_error": printer_error,
+            "printer_info": printer_info,
+            "autodetected": not config.PRINTER_USB,
         },
     )

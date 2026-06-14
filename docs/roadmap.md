@@ -7,15 +7,15 @@ how it all fits together. This page tracks what's planned next.
 > This is an early project, still tested as a beta by the developer - priorities may shift.
 > Feedback and pull requests are very welcome: open an [issue](../../issues).
 
+## Recently shipped
+
+- **Printer auto-discovery** - leave `PRINTER_USB` unset and LabelJetty auto-detects a
+  connected TSPL printer (matching known vendor ids and USB printer-class devices). It uses
+  the printer when exactly one is found, and lists candidates as copy-paste selectors when
+  several are. Run `labeljetty-testbench list-printers` to see what it finds. See
+  [Find your printer](setup.md#3-find-your-printer).
+
 ## Planned
-
-### Printer auto-discovery
-
-Today you have to find your printer's USB vendor:product id with `lsusb` and set `PRINTER_USB` by
-hand (see the [Setup guide](setup.md#3-find-your-printer)). The
-plan is to **auto-detect a connected TSPL printer** when `PRINTER_USB` is unset - matching known
-vendor/product ids (e.g. the Poskey-class `2d37:*` family) and falling back to a clear message
-when several candidates exist. This removes the most fiddly part of first-time setup.
 
 ### OIDC / SSO authentication
 
