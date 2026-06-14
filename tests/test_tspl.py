@@ -143,3 +143,28 @@ def test_build_methods_return_label_sized_images():
         printer.build_barcode_image("123"),
     ):
         assert img.size == (printer.width_px, printer.height_px)
+
+
+def test_fit_image_margin_reserves_white_border():
+    """A solid image fitted with a margin leaves a blank border of that width."""
+    printer, _ = make_printer()  # 57x32mm @ 203dpi
+    black = Image.new("L", (printer.width_px, printer.height_px), 0)
+
+    out = printer._fit_image(black, fit="fill", margin_mm=2.0)
+    assert out.size == (printer.width_px, printer.height_px)
+
+    margin_px = round((2.0 / 25.4) * printer.dpi)
+    cx, cy = printer.width_px // 2, printer.height_px // 2
+    # Corners (within the margin band) stay white; the centre is inked.
+    assert out.getpixel((1, 1)) == 255
+    assert out.getpixel((margin_px - 1, cy)) == 255
+    assert out.getpixel((cx, margin_px - 1)) == 255
+    assert out.getpixel((cx, cy)) == 0
+
+
+def test_fit_image_zero_margin_fills_to_edge():
+    printer, _ = make_printer()
+    black = Image.new("L", (printer.width_px, printer.height_px), 0)
+    out = printer._fit_image(black, fit="fill", margin_mm=0.0)
+    assert out.getpixel((0, 0)) == 0
+    assert out.getpixel((printer.width_px - 1, printer.height_px - 1)) == 0

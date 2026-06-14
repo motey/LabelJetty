@@ -268,6 +268,7 @@ class PrintService:
             printer.print_png(
                 job.get_input_file_path(),
                 fit=params.get("fit", "fit"),
+                margin_mm=params.get("margin_mm", 0.0),
                 copies=copies,
             )
         elif job_type == "pdf":
@@ -275,6 +276,7 @@ class PrintService:
                 job.get_input_file_path(),
                 page=params.get("page", 0),
                 fit=params.get("fit", "fit"),
+                margin_mm=params.get("margin_mm", 0.0),
                 copies=copies,
             )
         elif job_type == "text":

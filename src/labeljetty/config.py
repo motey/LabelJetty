@@ -200,6 +200,18 @@ class Config(BaseSettings):
         description="Web path (appended to HOMEBOX_URL) an entity opens at; '{id}' is substituted. Used for the QR link.",
         json_schema_extra=_ui("Homebox", label="Entity URL template"),
     )
+    HOMEBOX_LABEL_MARGIN_MM: float = Field(
+        default=1.0,
+        ge=0.0,
+        json_schema_extra=_ui("Homebox", label="Safety border (mm)"),
+        description=(
+            "Blank safety border reserved on all sides when printing a Homebox "
+            "label. Homebox renders its own label edge-to-edge (sized by the "
+            "server-side HBOX_LABEL_MAKER_* settings, which we cannot override per "
+            "request), so we inset its image to keep content off the label edge. "
+            "Set 0 to print exactly what Homebox returns."
+        ),
+    )
     HOMEBOX_LABEL_SERVICE_AUTOPRINT: bool = Field(
         default=True,
         json_schema_extra=_ui("Homebox", label="Auto-print on label-service fetch"),

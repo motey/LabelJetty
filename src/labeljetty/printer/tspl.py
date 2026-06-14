@@ -303,7 +303,9 @@ class TSPLPrinter:
         canvas.paste(img.convert("L"), (x, y))
         return canvas
 
-    def _fit_image(self, img: Image.Image, fit: str = "fit") -> Image.Image:
+    def _fit_image(
+        self, img: Image.Image, fit: str = "fit", margin_mm: float = 0.0
+    ) -> Image.Image:
         """Scale ``img`` onto a full label canvas according to ``fit``.
 
         Modes (preserving aspect ratio except ``stretch``):
@@ -313,11 +315,19 @@ class TSPLPrinter:
                          cropped (no margins).
           - ``stretch``  resize to the exact label size, ignoring aspect ratio.
           - ``original`` keep the image's own pixel size, centered (cropped if larger).
+
+        ``margin_mm`` reserves a blank safety border (all four sides) by fitting
+        into the label *minus* that margin. It is a safe inset used e.g. for
+        Homebox labels whose own content sits too close to the edge; the image is
+        still centered on the full label canvas.
         """
         canvas = Image.new("L", (self.width_px, self.height_px), 255)
         img = img.convert("L")
         iw, ih = img.size
-        lw, lh = self.width_px, self.height_px
+        margin_px = max(0, round((margin_mm / 25.4) * self.dpi)) if margin_mm else 0
+        # Clamp so a too-large margin can never collapse the usable area to <1px.
+        margin_px = min(margin_px, (self.width_px - 1) // 2, (self.height_px - 1) // 2)
+        lw, lh = self.width_px - 2 * margin_px, self.height_px - 2 * margin_px
 
         if fit == "original":
             scaled = img
@@ -330,8 +340,12 @@ class TSPLPrinter:
                 Image.Resampling.LANCZOS,
             )
 
-        # Center; PIL crops automatically when the paste origin is negative.
-        canvas.paste(scaled, ((lw - scaled.width) // 2, (lh - scaled.height) // 2))
+        # Compose onto an inset sub-canvas first so the safety border always holds:
+        # ``fill``/``original`` overflow is cropped *to the inset area*, never bleeding
+        # into the margin band. With margin_px == 0 this is just the full canvas.
+        inset = Image.new("L", (lw, lh), 255)
+        inset.paste(scaled, ((lw - scaled.width) // 2, (lh - scaled.height) // 2))
+        canvas.paste(inset, (margin_px, margin_px))
         return canvas
 
     def _render_and_print_image(
@@ -360,12 +374,14 @@ class TSPLPrinter:
         height: int = None,
         x: int = 0,
         y: int = 0,
+        margin_mm: float = 0.0,
     ) -> Image.Image:
         """Load a PNG and scale it onto a full label canvas (no print).
 
         ``fit`` selects the scaling mode (see :meth:`_fit_image`). When an
         explicit ``width``/``height`` is given those take precedence (legacy
-        exact sizing), composed at ``(x, y)``.
+        exact sizing), composed at ``(x, y)``. ``margin_mm`` reserves a blank
+        safety border (ignored under explicit ``width``/``height``).
         """
         img = Image.open(png)
 
@@ -381,7 +397,7 @@ class TSPLPrinter:
                 img = img.resize((w, height), Image.Resampling.LANCZOS)
             return self._compose_on_canvas(img, x, y)
 
-        return self._fit_image(img, fit)
+        return self._fit_image(img, fit, margin_mm=margin_mm)
 
     def print_png(
         self,
@@ -392,6 +408,7 @@ class TSPLPrinter:
         x: int = 0,
         y: int = 0,
         copies: int = 1,
+        margin_mm: float = 0.0,
     ):
         """
         Print a PNG image on the label.
@@ -404,8 +421,12 @@ class TSPLPrinter:
             width, height: Optional explicit target size in pixels (legacy).
             x, y: Position in pixels when explicit sizing is used.
             copies: Number of labels to print.
+            margin_mm: Blank safety border to reserve on all sides (see
+                :meth:`_fit_image`).
         """
-        img = self.build_png_image(png, fit=fit, width=width, height=height, x=x, y=y)
+        img = self.build_png_image(
+            png, fit=fit, width=width, height=height, x=x, y=y, margin_mm=margin_mm
+        )
         self._render_and_print_image(img, 0, 0, copies=copies)
 
     # ------------------------------------------------------------ #
@@ -418,6 +439,7 @@ class TSPLPrinter:
         page: Union[int, Literal["all"]] = 0,
         fit: str = "fit",
         copies: int = 1,
+        margin_mm: float = 0.0,
     ):
         """
         Render PDF page(s) to a label-sized bitmap and print.
@@ -431,9 +453,12 @@ class TSPLPrinter:
             page: Zero-based page index, or "all" to print every page.
             fit: Scaling mode for each page.
             copies: Copies per page.
+            margin_mm: Blank safety border to reserve on all sides.
         """
         for img in self._render_pdf_pages(pdf, page):
-            self._render_and_print_image(self._fit_image(img, fit), 0, 0, copies=copies)
+            self._render_and_print_image(
+                self._fit_image(img, fit, margin_mm=margin_mm), 0, 0, copies=copies
+            )
 
     def _render_pdf_pages(
         self,
@@ -483,6 +508,7 @@ class TSPLPrinter:
         pdf: _typing.StrOrBytesPath | IO[bytes],
         page: Union[int, Literal["all"]] = 0,
         fit: str = "fit",
+        margin_mm: float = 0.0,
     ) -> Image.Image:
         """Render a single PDF page to a label image (no print).
 
@@ -490,7 +516,7 @@ class TSPLPrinter:
         """
         index = 0 if page == "all" else page
         for img in self._render_pdf_pages(pdf, index):
-            return self._fit_image(img, fit)
+            return self._fit_image(img, fit, margin_mm=margin_mm)
         raise ValueError("PDF has no pages to render")
 
     # ------------------------------------------------------------ #

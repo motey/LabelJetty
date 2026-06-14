@@ -54,7 +54,9 @@ def render_label_image(
         if input_file_path is None:
             raise ValueError("png preview requires an input file")
         img = printer.build_png_image(
-            str(input_file_path), fit=params.get("fit", "fit")
+            str(input_file_path),
+            fit=params.get("fit", "fit"),
+            margin_mm=params.get("margin_mm", 0.0),
         )
     elif job_type == "pdf":
         if input_file_path is None:
@@ -63,6 +65,7 @@ def render_label_image(
             str(input_file_path),
             page=params.get("page", 0),
             fit=params.get("fit", "fit"),
+            margin_mm=params.get("margin_mm", 0.0),
         )
     elif job_type == "text":
         img = printer.build_text_image(

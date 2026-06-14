@@ -386,23 +386,25 @@ def ui_homebox_preview(
         return templates.TemplateResponse(
             "_preview.html", {"request": request, "error": str(e)}
         )
-    if suffix == ".pdf":
-        # Render the PDF page to an image just for on-screen preview.
-        import tempfile
-        from labeljetty.printer.render import render_label_png_bytes
+    # Render through our own pipeline so the preview reflects exactly what prints —
+    # including the Homebox safety border (HOMEBOX_LABEL_MARGIN_MM) inset.
+    import tempfile
+    from labeljetty.printer.render import render_label_png_bytes
 
-        w, h, d = _geometry(None, None, None)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(data)
-            tmp_path = Path(tmp.name)
-        try:
-            png = render_label_png_bytes(
-                "pdf", {"page": 0}, width_mm=w, height_mm=h, dpi=d,
-                input_file_path=tmp_path,
-            )
-        finally:
-            tmp_path.unlink(missing_ok=True)
-        data = png
+    w, h, d = _geometry(None, None, None)
+    job_type = "pdf" if suffix == ".pdf" else "png"
+    params: dict = {"margin_mm": config.HOMEBOX_LABEL_MARGIN_MM}
+    if job_type == "pdf":
+        params["page"] = 0
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(data)
+        tmp_path = Path(tmp.name)
+    try:
+        data = render_label_png_bytes(
+            job_type, params, width_mm=w, height_mm=h, dpi=d, input_file_path=tmp_path
+        )
+    finally:
+        tmp_path.unlink(missing_ok=True)
     data_uri = "data:image/png;base64," + base64.b64encode(data).decode("ascii")
     return templates.TemplateResponse(
         "_preview.html", {"request": request, "image": data_uri, "homebox": True}
@@ -426,7 +428,9 @@ def ui_homebox_print(
         data, suffix = _homebox_fetch_label(kind, entity_id)
         filename = _store_bytes(data, suffix)
         job_type = "pdf" if suffix == ".pdf" else "png"
-        params = {"page": 0} if job_type == "pdf" else {}
+        params = {"margin_mm": config.HOMEBOX_LABEL_MARGIN_MM}
+        if job_type == "pdf":
+            params["page"] = 0
         job = _enqueue(job_type, params=params, input_file_name=filename)
     except (HomeboxError, Exception) as e:
         return templates.TemplateResponse(
